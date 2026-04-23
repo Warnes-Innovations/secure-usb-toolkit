@@ -3,11 +3,13 @@ import subprocess
 import shlex
 import sys
 import os
+import zipfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent
 DIST_DIR = REPO_ROOT / "dist"
 CONTAINER_PATH = REPO_ROOT / "output.vc"
+STAGING_ZIP = REPO_ROOT / "staging.zip"
 
 
 def run(cmd):
@@ -76,25 +78,77 @@ def phase_build():
 
     # Step 3 — Source files
     step_header(3, 5, "Source files to encrypt")
-    print("  Enter the folder whose contents will be placed in the encrypted container.")
-    while True:
-        src = ask_required("Source folder path")
-        if os.path.isdir(src):
-            break
-        print(f"  [!] Not a directory: {src}")
-    src = os.path.abspath(src)
+    print("  Choose a source folder (optionally compressed to zip) or supply an existing zip.")
+    print()
+    print("    1. Use a folder  (copy contents as-is, or compress to a single zip first)")
+    print("    2. Use an existing zip file")
+    print()
+    src_type = ask("  Choice", "1")
 
-    try:
-        files = [f for f in Path(src).rglob("*") if f.is_file()]
-        total_mb = sum(f.stat().st_size for f in files) // (1024 * 1024)
-        suggested_mb = max(50, int(total_mb * 1.15) + 1)
-        suggested_size = (
-            f"{round(suggested_mb / 1024, 1)}G" if suggested_mb >= 1024
-            else f"{suggested_mb}M"
-        )
-        print(f"  {len(files)} file(s), ~{total_mb} MB  →  suggested size: {suggested_size}")
-    except Exception:
-        suggested_size = "1G"
+    payload_path: Path   # file or folder that ends up in the container
+    payload_label: str   # human-readable description for Step 5 instructions
+
+    if src_type == "2":
+        # ── Existing zip ────────────────────────────────────────────────────
+        while True:
+            p = ask_required("Path to zip file")
+            p = os.path.abspath(p)
+            if os.path.isfile(p) and p.lower().endswith(".zip"):
+                break
+            if not os.path.isfile(p):
+                print(f"  [!] File not found: {p}")
+            else:
+                print("  [!] File does not appear to be a zip (expected .zip extension).")
+        payload_path = Path(p)
+        payload_label = "zip file"
+        payload_size_mb = payload_path.stat().st_size // (1024 * 1024)
+        print(f"  Zip size: ~{payload_size_mb} MB")
+    else:
+        # ── Folder ──────────────────────────────────────────────────────────
+        while True:
+            p = ask_required("Source folder path")
+            p = os.path.abspath(p)
+            if os.path.isdir(p):
+                break
+            print(f"  [!] Not a directory: {p}")
+        src_dir = Path(p)
+
+        raw_files = [f for f in src_dir.rglob("*") if f.is_file()]
+        raw_mb = sum(f.stat().st_size for f in raw_files) // (1024 * 1024)
+        print(f"  {len(raw_files)} file(s), ~{raw_mb} MB uncompressed")
+        print()
+
+        if confirm("  Compress to a zip archive before loading into the container?"):
+            zip_dest = STAGING_ZIP
+            if zip_dest.exists():
+                print(f"  Existing staging zip found: {zip_dest}")
+                if not confirm("  Overwrite it?"):
+                    payload_path = zip_dest
+                    payload_label = "zip file (existing staging.zip)"
+                    payload_size_mb = zip_dest.stat().st_size // (1024 * 1024)
+                    print(f"  Using existing staging zip: ~{payload_size_mb} MB")
+                    zip_dest = None  # skip compression
+
+            if zip_dest is not None:
+                print(f"  Compressing → {STAGING_ZIP} ...")
+                with zipfile.ZipFile(STAGING_ZIP, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for f in sorted(raw_files):
+                        zf.write(f, f.relative_to(src_dir.parent))
+                payload_size_mb = STAGING_ZIP.stat().st_size // (1024 * 1024)
+                print(f"  Compressed to ~{payload_size_mb} MB  (was ~{raw_mb} MB)")
+                payload_path = STAGING_ZIP
+                payload_label = "zip file (staging.zip)"
+        else:
+            payload_path = src_dir
+            payload_label = "folder"
+            payload_size_mb = raw_mb
+
+    suggested_mb = max(50, int(payload_size_mb * 1.15) + 1)
+    suggested_size = (
+        f"{round(suggested_mb / 1024, 1)}G" if suggested_mb >= 1024
+        else f"{suggested_mb}M"
+    )
+    print(f"  Payload: ~{payload_size_mb} MB  →  suggested container size: {suggested_size}")
 
     # Step 4 — Create container
     step_header(4, 5, "Create encrypted container")
@@ -109,17 +163,21 @@ def phase_build():
     # Step 5 — Load files into container
     step_header(5, 5, "Load files into container")
     print()
-    print(f"  Container: {CONTAINER_PATH}")
-    print(f"  Source:    {src}")
+    print(f"  Container:  {CONTAINER_PATH}")
+    print(f"  Payload:    {payload_path}  ({payload_label})")
     print()
-    print("  Mount the container with VeraCrypt, copy your files in, then dismount:")
+    print("  Mount the container with VeraCrypt, copy your payload in, then dismount:")
     print(f"    1. Open VeraCrypt → Mount → select  {CONTAINER_PATH}")
-    print(f"    2. Copy the contents of  {src}  into the mounted volume")
+    if payload_path.is_dir():
+        print(f"    2. Copy the contents of  {payload_path}  into the mounted volume")
+    else:
+        print(f"    2. Copy  {payload_path}  into the mounted volume")
     print("    3. Dismount the volume in VeraCrypt before continuing")
     print()
     input("  Press Enter when the container is loaded and dismounted... ")
     print("\n  ✓ Phase 1 complete.")
     print(f"    Container: {CONTAINER_PATH}")
+    print(f"    Payload:   {payload_path}")
     print(f"    Launchers: {DIST_DIR}/")
 
 
