@@ -42,11 +42,23 @@ python3 cli.py clone /dev/sdb /dev/sdc
 python3 cli.py verify
 
 # Makefile shortcuts
+make fetch-veracrypt   # download Windows VeraCrypt installer into dist/VeraCrypt/
 make usb DEVICE=/dev/sdb
 make container
 make populate
 make verify
 make dist          # build PyInstaller launcher into dist/
+```
+
+### Provisioning workflow (full USB from scratch)
+
+```bash
+make fetch-veracrypt          # download + verify VeraCrypt Windows installer
+make usb DEVICE=/dev/sdb      # partition and format the USB
+make container                # create SECURE_DATA.vc (you choose the password)
+make dist                     # build platform launchers
+make populate                 # copy launchers, README.html, and VeraCrypt to USB
+make verify                   # checksum everything in dist/
 ```
 
 ---
@@ -55,10 +67,14 @@ make dist          # build PyInstaller launcher into dist/
 
 Non-technical recipients receive a USB with:
 
-- **Partition 1 (FAT32 — TOOLS):** `README.html` with step-by-step VeraCrypt instructions, plus platform launchers (`SecureUSB.command` for macOS, `SecureUSB.exe` for Windows, `SecureUSB.sh` for Linux).
+- **Partition 1 (FAT32 — TOOLS):** `README.html` with step-by-step instructions, a bundled VeraCrypt Windows installer, and platform launchers (`SecureUSB.command` for macOS, `SecureUSB.bat` for Windows, `SecureUSB.sh` for Linux).
 - **Partition 2 (exFAT — DATA):** `SECURE_DATA.vc` — the AES-256 encrypted VeraCrypt container.
 
-The user opens `README.html` directly from the USB drive in any browser and follows the plain-language instructions to install VeraCrypt and access their files. No technical knowledge is required.
+**Windows users** double-click `SecureUSB.bat` → `README.html` opens in their browser → they run the bundled `VeraCrypt/VeraCrypt Setup 1.26.24.exe` → mount `SECURE_DATA.vc`. No internet connection required.
+
+**macOS/Linux users** open `README.html` and follow the instructions to install VeraCrypt from the official site.
+
+> **Note:** Windows USB _provisioning_ (creating layouts, containers, cloning) currently requires Linux or macOS. See the GitHub issue tracker for the Windows provisioning roadmap.
 
 ---
 
@@ -95,7 +111,8 @@ build/
   create_container.sh           — Create VeraCrypt container (interactive password)
   clone_usb.sh                  — Bit-for-bit USB clone via dd
   verify.sh                     — SHA-256 integrity check (Linux + macOS)
-  populate_tools_partition.sh   — Copy launchers + README.html to TOOLS partition
+  populate_tools_partition.sh   — Copy launchers + README.html + VeraCrypt to USB
+  fetch_veracrypt.sh            — Download + verify Windows VeraCrypt installer
   safety.py                     — Cross-platform disk safety module
 
 cli.py                          — Scriptable CLI (argparse subcommands)

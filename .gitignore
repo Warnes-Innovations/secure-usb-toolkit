@@ -21,5 +21,8 @@ output.vc
 .DS_Store
 .AppleDouble
 
+# Downloaded VeraCrypt binaries (fetch with: make fetch-veracrypt)
+dist/VeraCrypt/
+
 # Sensitive config overrides (never commit local passwords or env overrides)
 *.env.local

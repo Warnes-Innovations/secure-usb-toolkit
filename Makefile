@@ -2,7 +2,7 @@ DEVICE ?= /dev/sdX
 SRC    ?= /dev/sdX
 DST    ?= /dev/sdY
 
-.PHONY: tui cli container usb populate clone verify dist
+.PHONY: tui cli container usb populate clone verify dist fetch-veracrypt
 
 tui:
 	python3 tui.py
@@ -34,3 +34,7 @@ dist:
 	cp launchers/SecureUSB.sh dist/
 	cp launchers/SecureUSB.bat dist/
 	chmod +x dist/SecureUSB.command dist/SecureUSB.sh
+
+fetch-veracrypt:
+	chmod +x build/fetch_veracrypt.sh
+	cd build && ./fetch_veracrypt.sh
