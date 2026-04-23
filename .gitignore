@@ -1,0 +1,25 @@
+# Python
+*.pyc
+__pycache__/
+*.egg-info/
+.venv/
+venv/
+*.spec
+
+# Build artifacts
+dist/
+!dist/.gitkeep
+
+# VeraCrypt containers
+*.vc
+output.vc
+
+# Temp / scratch
+/tmp/
+
+# macOS
+.DS_Store
+.AppleDouble
+
+# Sensitive config overrides (never commit local passwords or env overrides)
+*.env.local

@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Secure USB — Getting Started</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 740px;
+      margin: 40px auto;
+      padding: 0 24px 60px;
+      color: #1a1a1a;
+      line-height: 1.6;
+    }
+    h1 { color: #1a1a2e; font-size: 1.8em; }
+    h2 { color: #16213e; border-bottom: 2px solid #e0e0e0; padding-bottom: 6px; margin-top: 36px; }
+    h3 { margin: 0 0 8px 0; font-size: 1em; color: #333; }
+    .warning {
+      background: #fff8e1;
+      border-left: 4px solid #f59e0b;
+      padding: 14px 18px;
+      border-radius: 4px;
+      margin: 20px 0;
+    }
+    .platform {
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 16px 0;
+    }
+    ol li { margin: 10px 0; }
+    code {
+      background: #f0f0f0;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'SF Mono', Consolas, monospace;
+      font-size: 0.92em;
+    }
+    a { color: #2563eb; }
+    .step-num {
+      display: inline-block;
+      background: #1a1a2e;
+      color: white;
+      border-radius: 50%;
+      width: 28px;
+      height: 28px;
+      text-align: center;
+      line-height: 28px;
+      font-weight: bold;
+      margin-right: 8px;
+      font-size: 0.9em;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🔐 Secure USB Drive</h1>
+  <p>
+    This USB drive contains a <strong>password-protected encrypted area</strong> for securely
+    storing files. The encrypted storage is powered by
+    <a href="https://www.veracrypt.fr" target="_blank">VeraCrypt</a>, a free and open-source
+    encryption tool trusted by security professionals worldwide.
+  </p>
+  <p>
+    Your files are stored inside <code>SECURE_DATA.vc</code> on the second partition of this drive.
+    To access them, you need VeraCrypt installed on your computer.
+  </p>
+
+  <div class="warning">
+    ⚠️ <strong>Important:</strong> If you forget your password, your data <em>cannot</em> be
+    recovered — not even by the person who gave you this drive. Keep your password safe.
+  </div>
+
+  <h2><span class="step-num">1</span> Install VeraCrypt</h2>
+  <p>
+    Download and install VeraCrypt for free from the official website:
+  </p>
+  <p style="font-size: 1.1em;">
+    👉 <a href="https://www.veracrypt.fr/en/Downloads.html" target="_blank">
+      https://www.veracrypt.fr/en/Downloads.html
+    </a>
+  </p>
+  <p>
+    Choose the installer for your operating system (Windows, macOS, or Linux),
+    run it, and follow the on-screen instructions. Installation is straightforward —
+    just click through the defaults.
+  </p>
+
+  <h2><span class="step-num">2</span> Open Your Encrypted Files</h2>
+
+  <div class="platform">
+    <h3>🪟 Windows</h3>
+    <ol>
+      <li>Open the <strong>VeraCrypt</strong> application from your Start menu.</li>
+      <li>Click <strong>Select File…</strong> in the middle of the window.</li>
+      <li>
+        Browse to the <strong>second partition</strong> of this USB drive and open
+        <code>SECURE_DATA.vc</code>.<br>
+        <em>(The second partition may appear as a separate drive letter in Windows Explorer.)</em>
+      </li>
+      <li>
+        In the list at the top of VeraCrypt, click on an unused drive letter
+        (e.g. <strong>Z:</strong>).
+      </li>
+      <li>Click <strong>Mount</strong>.</li>
+      <li>Enter your password and click <strong>OK</strong>.</li>
+      <li>
+        Your files now appear in Windows Explorer under the drive letter you selected.
+        Use them just like any other folder.
+      </li>
+    </ol>
+  </div>
+
+  <div class="platform">
+    <h3>🍎 macOS</h3>
+    <ol>
+      <li>Open the <strong>VeraCrypt</strong> application.</li>
+      <li>Click <strong>Select File…</strong> and navigate to the USB drive's second partition.</li>
+      <li>Select <code>SECURE_DATA.vc</code> and click <strong>Open</strong>.</li>
+      <li>Click <strong>Mount</strong>, enter your password, then click <strong>OK</strong>.</li>
+      <li>
+        Your files appear in <strong>Finder → Locations</strong> as a new mounted volume.
+      </li>
+    </ol>
+  </div>
+
+  <div class="platform">
+    <h3>🐧 Linux</h3>
+    <ol>
+      <li>Open VeraCrypt (or run <code>veracrypt</code> in a terminal).</li>
+      <li>Click <strong>Select File…</strong> and choose <code>SECURE_DATA.vc</code>.</li>
+      <li>Select a free slot number, click <strong>Mount</strong>, and enter your password.</li>
+      <li>Your files are accessible at the path shown in the VeraCrypt window.</li>
+    </ol>
+  </div>
+
+  <h2><span class="step-num">3</span> Close Safely When Done</h2>
+  <p>
+    It is important to properly dismount the encrypted drive before unplugging the USB.
+    Unplugging without dismounting can corrupt your files.
+  </p>
+  <ol>
+    <li>Close any files or applications that are using files from the encrypted drive.</li>
+    <li>In VeraCrypt, select the mounted volume and click <strong>Dismount</strong>.</li>
+    <li>
+      Eject or safely remove the USB drive from your operating system
+      before unplugging it.
+    </li>
+  </ol>
+
+  <h2>Need Help?</h2>
+  <p>
+    Full VeraCrypt documentation is available at:<br>
+    <a href="https://www.veracrypt.fr/en/Documentation.html" target="_blank">
+      https://www.veracrypt.fr/en/Documentation.html
+    </a>
+  </p>
+
+</body>
+</html>
