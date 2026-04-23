@@ -8,10 +8,12 @@ cd /d "%~dp0"
 :: ── Step 1: Check if VeraCrypt is already installed ──────────────────────────
 set "VC_EXE=%ProgramFiles%\VeraCrypt\VeraCrypt.exe"
 if exist "%VC_EXE%" goto already_installed
+set "VC_EXE=%ProgramFiles(x86)%\VeraCrypt\VeraCrypt.exe"
+if exist "%VC_EXE%" goto already_installed
 
 :: ── Step 2: Not installed — look for bundled installer ───────────────────────
 set "INSTALLER="
-for %%F in ("%~dp0VeraCrypt\VeraCrypt Setup *.exe") do set "INSTALLER=%%F"
+for /f "delims=" %%F in ('dir /b "%~dp0VeraCrypt\VeraCrypt Setup *.exe" 2^>nul') do set "INSTALLER=%~dp0VeraCrypt\%%F"
 
 if not defined INSTALLER goto no_installer
 
