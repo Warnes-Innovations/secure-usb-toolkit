@@ -5,6 +5,7 @@ import sys
 import os
 import zipfile
 import shutil
+import platform
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent
@@ -127,6 +128,45 @@ def step_header(n, total, title):
     print()
     print(bold(f"  Step {n}/{total}  —  {title}"))
     print(dim("  " + "·" * 38))
+
+
+# ── Pre-flight checks ─────────────────────────────────────────────────────────
+
+def check_prerequisites():
+    """Verify all required external tools are present before any user interaction."""
+    os_name = platform.system()
+
+    # (tool, install hint per OS)
+    checks = [
+        ("veracrypt", {
+            "Darwin": "brew install --cask veracrypt   or   https://veracrypt.io/en/Downloads.html",
+            "Linux":  "https://veracrypt.io/en/Downloads.html",
+        }),
+    ]
+    if os_name == "Linux":
+        checks += [
+            ("parted",     {"Linux": "sudo apt install parted              / sudo dnf install parted"}),
+            ("mkfs.vfat",  {"Linux": "sudo apt install dosfstools          / sudo dnf install dosfstools"}),
+            ("mkfs.exfat", {"Linux": "sudo apt install exfatprogs          / sudo dnf install exfatprogs"}),
+        ]
+
+    missing = [
+        (tool, hints.get(os_name, "see https://veracrypt.io"))
+        for tool, hints in checks
+        if shutil.which(tool) is None
+    ]
+
+    if not missing:
+        return
+
+    print()
+    err("Required tools are not installed. Install them, then re-run the wizard:")
+    print()
+    for tool, hint in missing:
+        print(bold(f"    {tool}"))
+        print(dim(f"      {hint}"))
+    print()
+    sys.exit(1)
 
 
 # ── Phase 1: Build artifacts ──────────────────────────────────────────────────
@@ -320,6 +360,7 @@ def phase_provision():
 
 def main():
     banner()
+    check_prerequisites()
     print()
     log("Phase 1  Build artifacts on this machine (source files → encrypted container)")
     log("Phase 2  Provision one or more USB drives from those artifacts")
