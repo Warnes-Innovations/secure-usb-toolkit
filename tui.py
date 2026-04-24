@@ -8,6 +8,7 @@ import zipfile
 import shutil
 import platform
 import contextlib
+import math
 from pathlib import Path
 
 try:
@@ -167,6 +168,29 @@ def run(cmd):
     subprocess.run(cmd, shell=True, check=True)
 
 
+# ── Disk space helpers ────────────────────────────────────────────────────────
+
+def _free_mb(path):
+    """Free space in MiB on the filesystem containing path."""
+    return shutil.disk_usage(path).free // (1024 * 1024)
+
+
+def _dir_size_mb(path):
+    """Total size in MiB of all files recursively under path."""
+    return sum(f.stat().st_size for f in Path(path).rglob("*") if f.is_file()) // (1024 * 1024)
+
+
+def _check_space(path, needed_mb, label):
+    """Warn if path's filesystem has less than needed_mb free; ask to confirm."""
+    free = _free_mb(path)
+    if free < needed_mb:
+        warn(f"Low disk space on {label}:  {free} MB free,  {needed_mb} MB needed")
+        if not confirm("Continue anyway?", default_yes=False):
+            sys.exit(1)
+    else:
+        log(f"Space OK on {label}: {free} MB free  ({needed_mb} MB needed)")
+
+
 # ── Section headers ───────────────────────────────────────────────────────────
 
 def banner():
@@ -312,12 +336,12 @@ def phase_build():
             payload_path = src_dir
             payload_size_mb = raw_mb
 
-    suggested_mb = max(50, int(payload_size_mb * 1.15) + 1)
-    suggested_size = (
-        f"{round(suggested_mb / 1024, 1)}G" if suggested_mb >= 1024
-        else f"{suggested_mb}M"
+    container_mb = max(50, int(payload_size_mb * 1.15) + 1)
+    container_size_str = (
+        f"{math.ceil(container_mb / 1024)}G" if container_mb >= 1024
+        else f"{container_mb}M"
     )
-    log(f"Payload: ~{payload_size_mb} MB  →  suggested container size: {suggested_size}")
+    log(f"Payload: ~{payload_size_mb} MB  →  container size: {container_size_str} (payload + 15% headroom)")
 
     # Step 4 — Create container
     step_header(4, 5, "Create encrypted container")
@@ -325,9 +349,11 @@ def phase_build():
         warn(f"Container already exists: {CONTAINER_PATH}")
         if not confirm("Use existing container?"):
             CONTAINER_PATH.unlink()
-            _create_container(suggested_size)
+            _check_space(REPO_ROOT, container_mb, "build volume")
+            _create_container(container_size_str)
     else:
-        _create_container(suggested_size)
+        _check_space(REPO_ROOT, container_mb, "build volume")
+        _create_container(container_size_str)
 
     # Step 5 — Load files
     step_header(5, 5, "Load files into container")
@@ -348,9 +374,7 @@ def phase_build():
     log(f"Launchers : {DIST_DIR}/")
 
 
-def _create_container(suggested_size):
-    size = prompt("Container size", suggested_size)
-    print()
+def _create_container(size):
     log(f"Creating {size} container at {CONTAINER_PATH}")
     log("VeraCrypt will prompt you to enter and confirm a password.")
     print()
@@ -395,6 +419,8 @@ def phase_provision():
         # Step 3 — TOOLS partition
         step_header(3, 4, "Populate TOOLS partition")
         tools_mount = prompt_path_required("TOOLS partition mount path (partition 1)")
+        tools_needed_mb = _dir_size_mb(DIST_DIR) + 1 if DIST_DIR.exists() else 1
+        _check_space(tools_mount, tools_needed_mb, "TOOLS partition")
         run_quiet(
             f"cd build && ./populate_tools_partition.sh {shlex.quote(tools_mount)}",
             "Copy launchers and README to TOOLS partition",
@@ -403,6 +429,8 @@ def phase_provision():
         # Step 4 — DATA partition
         step_header(4, 4, "Copy container to DATA partition")
         data_mount = prompt_path_required("DATA partition mount path (partition 2)")
+        container_needed_mb = CONTAINER_PATH.stat().st_size // (1024 * 1024) + 1
+        _check_space(data_mount, container_needed_mb, "DATA partition")
         dest = os.path.join(data_mount, "SECURE_DATA.vc")
         run_quiet(
             f"cp {shlex.quote(str(CONTAINER_PATH))} {shlex.quote(dest)}",
