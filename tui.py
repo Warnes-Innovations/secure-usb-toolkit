@@ -7,13 +7,14 @@ import re
 import time
 import threading
 import zipfile
+import tarfile
 import shutil
 import platform
 import argparse
 import contextlib
 import hashlib
 import json
-import math
+import getpass
 import urllib.request
 from pathlib import Path
 
@@ -26,11 +27,32 @@ except ImportError:
 
 REPO_ROOT = Path(__file__).parent
 DIST_DIR = REPO_ROOT / "dist"
-CONTAINER_PATH = REPO_ROOT / "output.vc"
-STAGING_ZIP = REPO_ROOT / "staging.zip"
+ARCHIVE_PATH = REPO_ROOT / "secure_data.7z"
 
-VERACRYPT_VERSION = "1.26.24"
-FUSE_T_VERSION = "1.2.1"
+PEAZIP_VERSION = "11.0.0"
+_PZ_BASE = f"https://github.com/peazip/PeaZip/releases/download/{PEAZIP_VERSION}"
+_PZ_SHA256_FILE = "SHA256.txt"
+_PZ_SHA256_HASH = "beef980b5d40c183b40a768e4840a0d91b9d56d0724db026b36957fc8c46cf4c"
+PEAZIP_DIST_DIR = DIST_DIR / "PeaZip"
+
+# (filename, sha256, dest_name, extract)
+PEAZIP_ASSETS = [
+    (f"peazip_portable-{PEAZIP_VERSION}.WIN64.zip",
+     "4e3ef7bbfc6607bbb08c29ce0178feb7845444c7d019fa6cfea8fc9081c103da",
+     "PeaZip-Windows", True),
+    (f"peazip-{PEAZIP_VERSION}.DARWIN.x86_64.zip",
+     "1daad9a82bbc97775ae1b7df91c613d7425dd49b0c91c2ce6a3105ff16298641",
+     "PeaZip-macOS-Intel.zip", False),
+    (f"peazip-{PEAZIP_VERSION}.DARWIN.aarch64.dmg",
+     "a9fc877533dcbb00a4e85a8c05579c3fc54f6391d540d58d7863f84f3c6170e4",
+     "PeaZip-macOS-ARM.dmg", False),
+    (f"peazip_portable-{PEAZIP_VERSION}.LINUX.GTK2.x86_64.tar.gz",
+     "1a61e57302ef7c8e3539ceabfc05db4faa26283589d531962f0867f6b435e5b5",
+     "PeaZip-Linux-x86", True),
+    (f"peazip_portable-{PEAZIP_VERSION}.LINUX.GTK2.aarch64.tar.gz",
+     "eb916b656edbe85bde722e6a1fa52c7e31519d9fe46b7a502be837e4deb3b3e7",
+     "PeaZip-Linux-ARM", True),
+]
 
 # ── Terminal styling ──────────────────────────────────────────────────────────
 
@@ -109,7 +131,12 @@ def _copy_with_progress(src, dst, label=None):
     total = src.stat().st_size
     total_mb = max(1, total // (1024 * 1024))
     if label:
-        log(f"{label}  ({total_mb:,} MB) ...")
+        log(f"{label}  ({_fmt_size(total_mb)}) ...")
+    # Choose display unit once so the bar is consistent throughout the copy.
+    if total_mb >= 1000:
+        divisor, unit, total_units = 1024 * 1024 * 1024, "GB", max(1, total // (1024 * 1024 * 1024))
+    else:
+        divisor, unit, total_units = 1024 * 1024, "MB", total_mb
     CHUNK = 4 * 1024 * 1024
     done = 0
     with src.open("rb") as fin, dst.open("wb") as fout:
@@ -119,7 +146,7 @@ def _copy_with_progress(src, dst, label=None):
                 break
             fout.write(chunk)
             done += len(chunk)
-            _bar(done // (1024 * 1024), total_mb, "MB")
+            _bar(done // divisor, total_units, unit)
     _bar_done()
     shutil.copystat(src, dst)
     if label:
@@ -252,6 +279,13 @@ def run(cmd):
 
 # ── Disk space helpers ────────────────────────────────────────────────────────
 
+def _fmt_size(mb):
+    """Return a human-readable size string: GB when >= 1000 MB, else MB."""
+    if mb >= 1000:
+        return f"{mb / 1024:.1f} GB"
+    return f"{mb:,} MB"
+
+
 def _free_mb(path):
     """Free space in MiB on the filesystem containing path."""
     return shutil.disk_usage(path).free // (1024 * 1024)
@@ -266,11 +300,11 @@ def _check_space(path, needed_mb, label):
     """Warn if path's filesystem has less than needed_mb free; ask to confirm."""
     free = _free_mb(path)
     if free < needed_mb:
-        warn(f"Low disk space on {label}:  {free} MB free,  {needed_mb} MB needed")
+        warn(f"Low disk space on {label}:  {_fmt_size(free)} free,  {_fmt_size(needed_mb)} needed")
         if not confirm("Continue anyway?", default_yes=False):
             sys.exit(1)
     else:
-        log(f"Space OK on {label}: {free} MB free  ({needed_mb} MB needed)")
+        log(f"Space OK on {label}: {_fmt_size(free)} free  ({_fmt_size(needed_mb)} needed)")
 
 
 # ── Section headers ───────────────────────────────────────────────────────────
@@ -447,7 +481,7 @@ def select_disk():
         if blocked:
             print(dim(f"\n  System disks (blocked): {', '.join(sorted(blocked))}"))
         print()
-        ans = _read(bold(f"  ▶  Select disk [1") + (f"–{len(entries)}" if len(entries) > 1 else "") + bold("]: "))
+        ans = _read(bold(f"  ▶  Select disk [1") + (f"–{len(entries)}" if len(entries) > 1 else "") + bold("]: ")).strip() or "1"
         if ans.isdigit() and 1 <= int(ans) <= len(entries):
             return entries[int(ans) - 1][0]
         err(f"Enter a number between 1 and {len(entries)}.")
@@ -470,143 +504,32 @@ def confirm_device(device):
 
 # ── Pre-flight checks ───────────────────────────────────────────────────────────────
 
-def _macos_install_prerequisites():
-    """On macOS, auto-download and launch FUSE-T and VeraCrypt installers if missing."""
-    vc_base = f"https://launchpad.net/veracrypt/trunk/{VERACRYPT_VERSION}/+download"
-    vc_dmg_name = f"VeraCrypt_FUSE-T_{VERACRYPT_VERSION}.dmg"
-    vc_dmg_url = f"{vc_base}/{vc_dmg_name}"
-    vc_checksum_url = f"{vc_base}/veracrypt-{VERACRYPT_VERSION}-sha256sum.txt"
-    fuse_t_pkg_name = f"fuse-t-macos-installer-{FUSE_T_VERSION}.pkg"
-    fuse_t_pkg_url = (
-        f"https://github.com/macos-fuse-t/fuse-t/releases/download/"
-        f"{FUSE_T_VERSION}/{fuse_t_pkg_name}"
-    )
-
-    def _dl_progress(n_blocks, block_size, total):
-        if total > 0:
-            done_mb = min(n_blocks * block_size, total) // (1024 * 1024)
-            total_mb = max(1, total // (1024 * 1024))
-            _bar(done_mb, total_mb, "MB")
-
-    # Always download into dist/VeraCrypt/ so files persist across runs.
-    dist_vc_dir = DIST_DIR / "VeraCrypt"
-    dist_vc_dir.mkdir(parents=True, exist_ok=True)
-
-    def _cached_or_download(name, url):
-        """Return path to `name`, downloading into dist/VeraCrypt/ if not already present."""
-        dest = dist_vc_dir / name
-        if dest.exists():
-            ok(f"Using cached {name}")
-            return dest
-        try:
-            urllib.request.urlretrieve(url, dest, _dl_progress)
-            _bar_done()
-            ok(f"Downloaded {name}")
-        except Exception as exc:
-            err(f"Download failed: {exc}")
-            sys.exit(1)
-        return dest
-
-    # ── FUSE-T ────────────────────────────────────────────────────────────────
-    def _fuse_t_installed():
-        r = subprocess.run(
-            ["pkgutil", "--pkgs", "--regexp", r"org\.fuse-t\.core\..*"],
-            capture_output=True,
-        )
-        return r.returncode == 0 and bool(r.stdout.strip())
-
-    fuse_t_ok = _fuse_t_installed()
-
-    if not fuse_t_ok:
-        warn("FUSE-T is not installed — preparing installer ...")
-        pkg_path = _cached_or_download(fuse_t_pkg_name, fuse_t_pkg_url)
-        log("Opening FUSE-T installer — follow the prompts.")
-        log("You may need to approve a system extension in:")
-        log("  System Settings \u2192 Privacy & Security \u2192 Security")
-        subprocess.run(["open", str(pkg_path)])
-        wait("Press Enter once FUSE-T installation is complete")
-        if not _fuse_t_installed():
-            err("FUSE-T still not detected.")
-            err("Install manually from https://www.fuse-t.org/ then re-run.")
-            sys.exit(1)
-        ok("FUSE-T installed")
-
-    # ── VeraCrypt ─────────────────────────────────────────────────────────────
-    vc_installed = (
-        shutil.which("veracrypt") is not None
-        or Path("/Applications/VeraCrypt.app").exists()
-    )
-
-    if not vc_installed:
-        warn("VeraCrypt is not installed — preparing installer ...")
-        vc_checksum_path = _cached_or_download("veracrypt-sha256sums.txt", vc_checksum_url)
-        vc_dmg_path = _cached_or_download(vc_dmg_name, vc_dmg_url)
-        log("Verifying checksum ...")
-        checksum_text = vc_checksum_path.read_text()
-        expected = next(
-            (line.split()[0] for line in checksum_text.splitlines()
-             if vc_dmg_name.lower() in line.lower()),
-            None,
-        )
-        if expected:
-            actual = hashlib.sha256(vc_dmg_path.read_bytes()).hexdigest()
-            if actual != expected:
-                err("Checksum MISMATCH — download may be corrupt or tampered with.")
-                err(f"  Expected : {expected}")
-                err(f"  Actual   : {actual}")
-                sys.exit(1)
-            ok("Checksum verified")
-        log("Mounting VeraCrypt DMG ...")
-        attach_result = subprocess.run(
-            ["hdiutil", "attach", str(vc_dmg_path), "-nobrowse"],
-            capture_output=True, text=True, check=True,
-        )
-        # hdiutil output lines are tab-separated: device, fstype, mountpoint
-        mount_point = attach_result.stdout.strip().splitlines()[-1].split("\t")[-1].strip()
-        try:
-            pkg_files = list(Path(mount_point).glob("*.pkg"))
-            if not pkg_files:
-                err("No .pkg installer found in VeraCrypt DMG.")
-                sys.exit(1)
-            vc_pkg = pkg_files[0]
-            log(f"Opening VeraCrypt installer ({vc_pkg.name}) — follow the prompts.")
-            subprocess.run(["open", str(vc_pkg)])
-            wait("Press Enter once VeraCrypt installation is complete")
-        finally:
-            subprocess.run(["hdiutil", "detach", mount_point], capture_output=True)
-        vc_ok = (
-            shutil.which("veracrypt") is not None
-            or Path("/Applications/VeraCrypt.app").exists()
-        )
-        if not vc_ok:
-            err("VeraCrypt not detected after installation.")
-            err("Install manually from https://veracrypt.io/en/Downloads.html then re-run.")
-            sys.exit(1)
-        ok("VeraCrypt installed")
+def _find_7z():
+    """Return the path to a 7-Zip binary, or abort with install instructions."""
+    for name in ("7zz", "7z", "7za"):
+        path = shutil.which(name)
+        if path:
+            return path
+    err("7-Zip is required to create the encrypted archive but was not found.")
+    if platform.system() == "Darwin":
+        err("  Install with:  brew install 7zip")
+    else:
+        err("  Install with:  sudo apt install 7zip    (Debian/Ubuntu)")
+        err("                 sudo dnf install 7zip    (Fedora/RHEL)")
+    sys.exit(1)
 
 
 def check_prerequisites():
-    """Verify all required external tools are present before any user interaction."""
+    """Verify required partition/format tools are present (Linux only)."""
     os_name = platform.system()
-
-    if os_name == "Darwin":
-        _macos_install_prerequisites()
+    if os_name != "Linux":
         return
 
-    # Linux: check required tools and show install hints if missing
     checks = [
-        ("veracrypt", {"Linux": "https://veracrypt.io/en/Downloads.html"}),
-        ("parted",    {"Linux": "sudo apt install parted      / sudo dnf install parted"}),
-        ("mkfs.vfat", {"Linux": "sudo apt install dosfstools  / sudo dnf install dosfstools"}),
-        ("mkfs.exfat",{"Linux": "sudo apt install exfatprogs  / sudo dnf install exfatprogs"}),
+        ("parted",     "sudo apt install parted      / sudo dnf install parted"),
+        ("mkfs.exfat", "sudo apt install exfatprogs  / sudo dnf install exfatprogs"),
     ]
-
-    missing = [
-        (tool, hints.get(os_name, "see https://veracrypt.io"))
-        for tool, hints in checks
-        if shutil.which(tool) is None
-    ]
-
+    missing = [(tool, hint) for tool, hint in checks if shutil.which(tool) is None]
     if not missing:
         return
 
@@ -622,201 +545,154 @@ def check_prerequisites():
 
 # ── Phase 1: Build artifacts ──────────────────────────────────────────────────
 
-def phase_build():
-    phase_header("1 of 2", "Build artifacts  (done once per batch)")
-    log("Launchers, the VeraCrypt installer, and the encrypted container are")
-    log("built here. Every USB drive in Phase 2 receives a copy of these artifacts.")
-
-    # Step 1 — Launchers
-    step_header(1, 5, "Build launchers")
-    if any(DIST_DIR.glob("SecureUSB*")):
-        ok("Launchers already present in dist/")
-    else:
-        cmd_dist(None)
-
-    # Step 2 — VeraCrypt Windows installer
-    step_header(2, 5, "VeraCrypt Windows installer")
-    vc_dir = DIST_DIR / "VeraCrypt"
-    if vc_dir.exists() and any(vc_dir.glob("*.exe")):
-        ok("VeraCrypt installer already in dist/VeraCrypt/")
-    else:
-        if confirm("Download VeraCrypt installer for Windows users?"):
-            cmd_fetch_veracrypt(None)
-        else:
-            warn("Skipped — Windows users will be directed to download manually.")
-
-    # Step 3 — Source payload
-    step_header(3, 5, "Source files to encrypt")
-    log("Choose a source folder (optionally compressed) or supply an existing zip.")
-    print()
-    print("      1.  Folder  (copy as-is, or compress to a zip first)")
-    print("      2.  Existing zip file")
-
-    src_type = prompt("Choice", "1")
-    payload_path: Path
-    payload_size_mb: int
-
-    def expand(raw): return os.path.abspath(os.path.expandvars(os.path.expanduser(raw)))
-
-    if src_type == "2":
-        # Existing zip
-        while True:
-            p = expand(prompt_path_required("Path to zip file"))
-            if os.path.isfile(p) and p.lower().endswith(".zip"):
-                break
-            err(f"Not found or not a .zip file: {p}")
-        payload_path = Path(p)
-        payload_size_mb = payload_path.stat().st_size // (1024 * 1024)
-        ok(f"Zip file accepted  ({payload_size_mb} MB)")
-
-    else:
-        # Folder
-        while True:
-            p = expand(prompt_path_required("Source folder path"))
-            if os.path.isdir(p):
-                break
-            err(f"Not a directory: {p}")
-        src_dir = Path(p)
-        with _spinner("Scanning source folder"):
-            raw_files = [f for f in src_dir.rglob("*") if f.is_file()]
-            raw_mb = sum(f.stat().st_size for f in raw_files) // (1024 * 1024)
-        ok(f"{len(raw_files):,} file(s), {raw_mb:,} MB uncompressed")
-
-        if confirm("Compress to a zip archive before loading into the container?"):
-            need_compress = True
-            if STAGING_ZIP.exists():
-                warn(f"Existing staging.zip found ({STAGING_ZIP.stat().st_size // (1024 * 1024)} MB)")
-                if not confirm("Overwrite it?"):
-                    need_compress = False
-                    payload_path = STAGING_ZIP
-                    payload_size_mb = STAGING_ZIP.stat().st_size // (1024 * 1024)
-                    ok(f"Using existing staging.zip  ({payload_size_mb} MB)")
-            if need_compress:
-                log(f"Compressing → {STAGING_ZIP} ...")
-                sorted_files = sorted(raw_files)
-                total = len(sorted_files)
-                with zipfile.ZipFile(STAGING_ZIP, "w", zipfile.ZIP_DEFLATED,
-                                     strict_timestamps=False) as zf:
-                    for done, f in enumerate(sorted_files, 1):
-                        zf.write(f, f.relative_to(src_dir.parent))
-                        _bar(done, total, "files")
-                _bar_done()
-                payload_size_mb = STAGING_ZIP.stat().st_size // (1024 * 1024)
-                ok(f"Compressed to {payload_size_mb} MB  (was {raw_mb} MB)")
-                payload_path = STAGING_ZIP
-        else:
-            payload_path = src_dir
-            payload_size_mb = raw_mb
-
-    container_mb = max(50, int(payload_size_mb * 1.15) + 1)
-    container_size_str = (
-        f"{math.ceil(container_mb / 1024)}G" if container_mb >= 1024
-        else f"{container_mb}M"
-    )
-    log(f"Payload: ~{payload_size_mb} MB  →  container size: {container_size_str} (payload + 15% headroom)")
-
-    # Step 4 — Create container
-    step_header(4, 5, "Create encrypted container")
-    if CONTAINER_PATH.exists():
-        warn(f"Container already exists: {CONTAINER_PATH}")
-        if not confirm("Use existing container?"):
-            CONTAINER_PATH.unlink()
-            _check_space(REPO_ROOT, container_mb, "build volume")
-            _create_container(container_size_str)
-    else:
-        _check_space(REPO_ROOT, container_mb, "build volume")
-        _create_container(container_size_str)
-
-    # Step 5 — Load files
-    step_header(5, 5, "Load files into container")
-    _load_container(payload_path)
-
-    ok("Phase 1 complete")
-    log(f"Container : {CONTAINER_PATH}")
-    log(f"Payload   : {payload_path}")
-    log(f"Launchers : {DIST_DIR}/")
-
-
-def _check_fuse_t():
-    """Abort on macOS if FUSE-T is not installed (required for VeraCrypt mounts)."""
-    if platform.system() != "Darwin":
-        return
-    r = subprocess.run(
-        ["pkgutil", "--pkgs", "--regexp", r"org\.fuse-t\.core\..*"],
-        capture_output=True,
-    )
-    if r.returncode != 0 or not r.stdout.strip():
-        err("FUSE-T is required on macOS to create and mount VeraCrypt containers.")
-        err("Install from: https://www.fuse-t.org/")
+def _prompt_password(msg):
+    """Prompt for a password without echoing it to the terminal."""
+    try:
+        return getpass.getpass(bold(f"\n  ▶  {msg}: "))
+    except KeyboardInterrupt:
+        print()
+        warn("Interrupted — exiting.")
         sys.exit(1)
 
 
-def _create_container(size):
-    _check_fuse_t()
-    log(f"Creating {size} container at {CONTAINER_PATH}")
-    log("VeraCrypt will prompt you to enter and confirm a password.")
-    print()
-    run(
-        f"veracrypt --text --create {shlex.quote(str(CONTAINER_PATH))}"
-        f" --size {shlex.quote(size)}"
-        f" --volume-type Normal"
-        f" --encryption AES"
-        f" --hash SHA-512"
-        f" --filesystem exfat"
-        f" --pim 0"
-        f" --random-source /dev/urandom"
-    )
+def _create_encrypted_archive(payload_path, output_path, password):
+    """Create an AES-256 encrypted .7z archive from payload_path."""
+    seven_z = _find_7z()
+    payload_path = Path(payload_path)
+    output_path = Path(output_path).resolve()
+
+    # Run 7z from the payload's parent so stored paths are relative.
+    if payload_path.is_dir():
+        cwd = str(payload_path.parent)
+        source_arg = payload_path.name
+    else:
+        cwd = None
+        source_arg = str(payload_path)
+
+    label = f"Create encrypted archive ({output_path.name})"
+
+    if _COLOR:
+        # -bsp1 sends progress percentages to stdout; -bso0 suppresses
+        # normal stdout messages so only progress lines appear on that stream.
+        cmd = [
+            seven_z, "a", "-t7z", "-mhe=on", "-mx=5",
+            f"-p{password}",
+            "-bsp1", "-bso0",
+            str(output_path),
+            source_arg,
+        ]
+        log(f"{label} ...")
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd)
+        buf = b""
+        while True:
+            chunk = proc.stdout.read(32)
+            if not chunk:
+                break
+            buf += chunk
+            # Progress lines are delimited by \r and/or \n.
+            parts = re.split(b"[\r\n]", buf)
+            buf = parts[-1]
+            for part in parts[:-1]:
+                m = re.search(rb"(\d+)%", part)
+                if m:
+                    _bar(int(m.group(1)), 100)
+        _bar_done()
+        proc.wait()
+        if proc.returncode != 0:
+            err("Archive creation failed")
+            stderr_out = proc.stderr.read().decode(errors="replace").strip()
+            if stderr_out:
+                _show_output_box(stderr_out, "7z output")
+            raise subprocess.CalledProcessError(proc.returncode, str(seven_z))
+    else:
+        cmd = [
+            seven_z, "a", "-t7z", "-mhe=on", "-mx=5",
+            f"-p{password}",
+            str(output_path),
+            source_arg,
+        ]
+        with _spinner(label):
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
+        if result.returncode != 0:
+            err("Archive creation failed")
+            combined = (result.stdout + result.stderr).strip()
+            if combined:
+                _show_output_box(combined, "7z output")
+            raise subprocess.CalledProcessError(result.returncode, str(seven_z))
+
+    ok(f"Created {output_path.name}")
 
 
-def _mount_container():
-    """Mount CONTAINER_PATH to a temp directory and return the mount point path."""
-    _check_fuse_t()
-    mount_dir = Path(f"/tmp/vc_secure_{os.getpid()}")
-    mount_dir.mkdir(exist_ok=True)
-    log("Mounting container — VeraCrypt will prompt for the password.")
-    print()
-    run(
-        f"veracrypt --text --mount {shlex.quote(str(CONTAINER_PATH))}"
-        f" {shlex.quote(str(mount_dir))}"
-        f" --pim 0"
-        f" --protect-hidden no"
-    )
-    ok(f"Mounted at {mount_dir}")
-    return mount_dir
+def _ask_password_and_create_archive(payload_path):
+    """Prompt for an encryption password (with confirmation) and create the archive."""
+    log("Choose a strong password for the encrypted archive.")
+    log("Users will need this password to open their files.")
+    while True:
+        pw1 = _prompt_password("Password")
+        pw2 = _prompt_password("Confirm password")
+        if pw1 == pw2:
+            break
+        err("Passwords do not match — try again.")
+    if payload_path.is_dir():
+        archive_mb = max(10, _dir_size_mb(payload_path) + 1)
+    else:
+        archive_mb = max(10, payload_path.stat().st_size // (1024 * 1024) + 1)
+    _check_space(REPO_ROOT, archive_mb, "build volume")
+    _create_encrypted_archive(payload_path, ARCHIVE_PATH, pw1)
 
 
-def _dismount_container(mount_dir):
-    """Dismount the container and remove the temp mount directory."""
-    run_quiet(
-        f"veracrypt --text --dismount {shlex.quote(str(mount_dir))}",
-        "Dismounting container",
-    )
-    with contextlib.suppress(Exception):
-        Path(mount_dir).rmdir()
+def phase_build():
+    phase_header("1 of 2", "Build artifacts  (done once per batch)")
+    log("PeaZip portables and the encrypted archive are prepared here.")
+    log("Every USB drive in Phase 2 receives a copy of these artifacts.")
 
-
-def _load_container(payload_path):
-    """Mount the container, copy the payload in, then dismount."""
-    mount_dir = _mount_container()
-    try:
-        if payload_path.is_file():
-            dest = mount_dir / payload_path.name
-            _copy_with_progress(payload_path, dest,
-                                 label=f"Copy {payload_path.name} \u2192 container")
+    # Step 1 — PeaZip portables
+    step_header(1, 3, "Fetch PeaZip portables")
+    if PEAZIP_DIST_DIR.exists() and any(PEAZIP_DIST_DIR.iterdir()):
+        ok("PeaZip portables already present in dist/PeaZip/")
+    else:
+        if confirm("Download PeaZip portables for all platforms?"):
+            cmd_fetch_peazip(None)
         else:
-            all_files = sorted(f for f in payload_path.rglob("*") if f.is_file())
-            total = len(all_files)
-            log(f"Copying {total:,} files \u2192 container ...")
-            for i, src in enumerate(all_files, 1):
-                rel = src.relative_to(payload_path)
-                dst = mount_dir / rel
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dst)
-                _bar(i, total, "files")
-            _bar_done()
-            ok(f"Copied {total:,} files")
-    finally:
-        _dismount_container(mount_dir)
+            warn("Skipped — USB drives will not include PeaZip portables.")
+
+    # Step 2 — Source payload
+    step_header(2, 3, "Source files to encrypt")
+    log("Provide a folder or file. 7z will compress and encrypt it in one pass.")
+
+    def expand(raw): return os.path.abspath(os.path.expandvars(os.path.expanduser(raw)))
+
+    while True:
+        p = expand(prompt_path_required("Source folder or file path"))
+        if os.path.exists(p):
+            break
+        err(f"Not found: {p}")
+    payload_path = Path(p)
+
+    if payload_path.is_dir():
+        with _spinner("Scanning source folder"):
+            raw_files = [f for f in payload_path.rglob("*") if f.is_file()]
+            raw_mb = sum(f.stat().st_size for f in raw_files) // (1024 * 1024)
+        ok(f"{len(raw_files):,} file(s), {_fmt_size(raw_mb)}")
+    else:
+        size_mb = payload_path.stat().st_size // (1024 * 1024)
+        ok(f"File accepted  ({_fmt_size(size_mb)})")
+
+    # Step 3 — Create encrypted archive
+    step_header(3, 3, "Create encrypted archive")
+    if ARCHIVE_PATH.exists():
+        warn(f"Archive already exists: {ARCHIVE_PATH}")
+        if not confirm("Use existing archive?"):
+            ARCHIVE_PATH.unlink()
+            _ask_password_and_create_archive(payload_path)
+        else:
+            ok("Using existing archive")
+    else:
+        _ask_password_and_create_archive(payload_path)
+
+    ok("Phase 1 complete")
+    log(f"Archive   : {ARCHIVE_PATH}")
+    log(f"Portables : {PEAZIP_DIST_DIR}/")
 
 
 # ── Phase 2: Provision USB drives ─────────────────────────────────────────────
@@ -824,42 +700,41 @@ def _load_container(payload_path):
 def phase_provision():
     phase_header("2 of 2", "Provision USB drives  (repeats per drive)")
 
-    if not CONTAINER_PATH.exists():
-        err(f"Container not found: {CONTAINER_PATH}")
-        err("Run Phase 1 first to build artifacts.")
+    if not ARCHIVE_PATH.exists():
+        err(f"Archive not found: {ARCHIVE_PATH}")
+        err("Run Phase 1 first to build the encrypted archive.")
         sys.exit(1)
+
+    if not PEAZIP_DIST_DIR.exists() or not any(PEAZIP_DIST_DIR.iterdir()):
+        warn("PeaZip portables not found in dist/PeaZip/")
+        warn("Run 'python3 tui.py fetch-peazip' to download them.")
+        if not confirm("Continue without PeaZip portables?", default_yes=False):
+            sys.exit(1)
 
     drive_count = 0
     while True:
         drive_count += 1
         try:
             # Step 1 — Device selection
-            step_header(1, 4, "Select target USB device")
+            step_header(1, 3, "Select target USB device")
             device = select_disk()
             confirm_device(device)
 
             # Step 2 — Format USB
-            step_header(2, 4, "Format USB")
+            step_header(2, 3, "Format USB")
             _create_usb_layout(device)
 
-            # Step 3 — Mount partitions and populate TOOLS
-            step_header(3, 4, "Populate TOOLS partition")
-            tools_mount, data_mount = _mount_usb_partitions(device)
+            # Step 3 — Mount and populate
+            step_header(3, 3, "Populate USB")
+            mount = _mount_usb(device)
             try:
-                tools_needed_mb = _dir_size_mb(DIST_DIR) + 1 if DIST_DIR.exists() else 1
-                _check_space(tools_mount, tools_needed_mb, "TOOLS partition")
-                _populate_tools(tools_mount)
-
-                # Step 4 — DATA partition
-                step_header(4, 4, "Copy container to DATA partition")
-                container_needed_mb = CONTAINER_PATH.stat().st_size // (1024 * 1024) + 1
-                _check_space(data_mount, container_needed_mb, "DATA partition")
-                dest = data_mount / "SECURE_DATA.vc"
-                _copy_with_progress(CONTAINER_PATH, dest,
-                                     label=f"Copy {CONTAINER_PATH.name} \u2192 SECURE_DATA.vc")
-                _verify_dist()
+                _populate_usb_tools(mount)
+                archive_needed_mb = ARCHIVE_PATH.stat().st_size // (1024 * 1024) + 1
+                _check_space(mount, archive_needed_mb, "USB")
+                _copy_with_progress(ARCHIVE_PATH, mount / ARCHIVE_PATH.name,
+                                     label=f"Copy {ARCHIVE_PATH.name} \u2192 USB")
             finally:
-                _eject_usb(device, tools_mount, data_mount)
+                _eject_usb(device, mount)
 
             ok(f"Drive #{drive_count} provisioned and ejected — safe to unplug")
 
@@ -883,7 +758,7 @@ def phase_provision():
     print()
 
 
-# ── Operation helpers (previously shell scripts) ─────────────────────────────
+# ── Operation helpers ─────────────────────────────────────────────────────────
 
 def _linux_partition(device, n):
     """Return the Linux partition device path for partition n.
@@ -905,101 +780,88 @@ def _macos_mount_point(part):
     return None
 
 
-def _mount_usb_partitions(device):
-    """Mount both USB partitions and return (tools_mount, data_mount) Paths."""
+def _mount_usb(device):
+    """Mount the USB partition and return its mount point Path."""
     os_name = platform.system()
     if os_name == "Darwin":
-        tools_part = f"{device}s1"
-        data_part  = f"{device}s2"
-        # diskutil partitionDisk auto-mounts; give it a moment, then verify
+        part = f"{device}s1"
         time.sleep(1)
-        tools_mount = _macos_mount_point(tools_part)
-        if not tools_mount:
-            run_quiet(f"diskutil mount {shlex.quote(tools_part)}", f"Mount TOOLS ({tools_part})")
-            tools_mount = _macos_mount_point(tools_part)
-        data_mount = _macos_mount_point(data_part)
-        if not data_mount:
-            run_quiet(f"diskutil mount {shlex.quote(data_part)}", f"Mount DATA ({data_part})")
-            data_mount = _macos_mount_point(data_part)
-        if not tools_mount or not data_mount:
-            err("Could not determine partition mount points — check diskutil info output")
+        mount = _macos_mount_point(part)
+        if not mount:
+            run_quiet(f"diskutil mount {shlex.quote(part)}", f"Mount {part}")
+            mount = _macos_mount_point(part)
+        if not mount:
+            err("Could not determine USB mount point — check diskutil info output")
             sys.exit(1)
     elif os_name == "Linux":
-        tools_part = _linux_partition(device, 1)
-        data_part  = _linux_partition(device, 2)
-        tools_mount = Path(f"/tmp/vc_tools_{os.getpid()}")
-        data_mount  = Path(f"/tmp/vc_data_{os.getpid()}")
-        tools_mount.mkdir(exist_ok=True)
-        data_mount.mkdir(exist_ok=True)
-        run_quiet(f"mount {shlex.quote(tools_part)} {shlex.quote(str(tools_mount))}",
-                  f"Mount TOOLS ({tools_part})")
-        run_quiet(f"mount {shlex.quote(data_part)} {shlex.quote(str(data_mount))}",
-                  f"Mount DATA ({data_part})")
+        part = _linux_partition(device, 1)
+        mount = Path(f"/tmp/secure_usb_{os.getpid()}")
+        mount.mkdir(exist_ok=True)
+        run_quiet(f"mount {shlex.quote(part)} {shlex.quote(str(mount))}", f"Mount {part}")
     else:
-        err(f"Unsupported OS for auto-mount: {os_name}")
+        err(f"Unsupported OS: {os_name}")
         sys.exit(1)
-    ok(f"TOOLS → {tools_mount}")
-    ok(f"DATA  → {data_mount}")
-    return Path(tools_mount), Path(data_mount)
+    ok(f"USB → {mount}")
+    return Path(mount)
 
 
-def _eject_usb(device, tools_mount, data_mount):
+def _eject_usb(device, mount):
     """Flush, unmount, and eject the USB device."""
     os_name = platform.system()
     if os_name == "Darwin":
+        # Force-unmount first so Spotlight/CoreServices cannot dissent the eject.
+        run_quiet(f"diskutil unmountDisk force {shlex.quote(device)}", f"Unmount {device}")
         run_quiet(f"diskutil eject {shlex.quote(device)}", f"Eject {device}")
     elif os_name == "Linux":
-        run_quiet(f"umount {shlex.quote(str(tools_mount))}", "Unmount TOOLS")
-        run_quiet(f"umount {shlex.quote(str(data_mount))}", "Unmount DATA")
+        run_quiet(f"umount {shlex.quote(str(mount))}", "Unmount USB")
         run_quiet("sync", "Flush writes")
-        for mp in (tools_mount, data_mount):
-            with contextlib.suppress(Exception):
-                Path(mp).rmdir()
+        with contextlib.suppress(Exception):
+            Path(mount).rmdir()
 
 
 def _create_usb_layout(device):
     os_name = platform.system()
     print()
     log(f"Target device : {device}")
-    log("Partition 1   : FAT32  (TOOLS — unencrypted, ~1 GiB)")
-    log("Partition 2   : exFAT  (DATA  — VeraCrypt container)")
+    log("Layout        : single exFAT partition (SECURE_USB)")
 
     if os_name == "Linux":
         run_quiet(f"parted {shlex.quote(device)} --script mklabel msdos", "Create partition table")
-        run_quiet(f"parted {shlex.quote(device)} --script mkpart primary fat32 1MiB 1024MiB", "Create TOOLS partition")
-        run_quiet(f"parted {shlex.quote(device)} --script mkpart primary exfat 1024MiB 100%", "Create DATA partition")
-        run_quiet(f"mkfs.vfat -F32 {shlex.quote(device + '1')}", "Format TOOLS (FAT32)")
-        run_quiet(f"mkfs.exfat {shlex.quote(device + '2')}", "Format DATA (exFAT)")
+        run_quiet(f"parted {shlex.quote(device)} --script mkpart primary 1MiB 100%", "Create partition")
+        part = _linux_partition(device, 1)
+        run_quiet(f"mkfs.exfat -n SECURE_USB {shlex.quote(part)}", "Format (exFAT)")
     elif os_name == "Darwin":
-        # diskutil handles partition + format in one shot on macOS
         run_quiet(
-            f"diskutil partitionDisk {shlex.quote(device)} 2 MBR"
-            f" FAT32 TOOLS 1G"
-            f" ExFAT DATA R",
+            f"diskutil partitionDisk {shlex.quote(device)} 1 MBR ExFAT SECURE_USB R",
             "Partition and format USB",
         )
     else:
         err(f"Unsupported OS for USB formatting: {os_name}")
         sys.exit(1)
 
-    ok(f"USB layout created on {device}")
-    log(f"  Partition 1 (FAT32 / TOOLS) : {device}s1  (macOS) / {device}1  (Linux)")
-    log(f"  Partition 2 (exFAT / DATA)  : {device}s2  (macOS) / {device}2  (Linux)")
+    ok(f"USB formatted on {device}  (exFAT / SECURE_USB)")
 
 
-def _populate_tools(mount):
-    if not DIST_DIR.exists() or not any(DIST_DIR.iterdir()):
-        err("dist/ is empty — run 'python3 tui.py dist' first to build launchers.")
-        sys.exit(1)
-    mount_path = Path(mount)
-    for src in DIST_DIR.iterdir():
-        dst = mount_path / src.name
-        if src.is_dir():
-            shutil.copytree(src, dst, dirs_exist_ok=True)
-        else:
-            shutil.copy2(src, dst)
-    shutil.copy2(REPO_ROOT / "templates" / "README.html", mount_path / "README.html")
-    ok(f"Tools partition populated at {mount}")
+def _populate_usb_tools(mount):
+    """Copy PeaZip portables and README.html to the USB (leaves archive untouched)."""
+    mount = Path(mount)
+    if PEAZIP_DIST_DIR.exists() and any(PEAZIP_DIST_DIR.iterdir()):
+        for src in PEAZIP_DIST_DIR.iterdir():
+            if src.name.startswith("."):
+                continue
+            dst = mount / src.name
+            if src.is_dir():
+                if dst.exists():
+                    shutil.rmtree(dst)
+                with _spinner(f"Copy {src.name}/ → USB"):
+                    shutil.copytree(src, dst)
+                ok(f"Copied {src.name}/")
+            else:
+                _copy_with_progress(src, dst, label=f"Copy {src.name} → USB")
+    else:
+        warn("No PeaZip portables found — skipping.")
+    shutil.copy2(REPO_ROOT / "templates" / "README.html", mount / "README.html")
+    ok("README.html copied")
 
 
 def _verify_dist():
@@ -1036,6 +898,100 @@ def _clone_usb(source, target):
 
 # ── CLI subcommands ──────────────────────────────────────────────────────────
 
+def cmd_fetch_peazip(_args):
+    """Download and verify all PeaZip portable packages for all platforms."""
+    PEAZIP_DIST_DIR.mkdir(parents=True, exist_ok=True)
+    cache_dir = PEAZIP_DIST_DIR / ".cache"
+    cache_dir.mkdir(exist_ok=True)
+
+    def _dl_progress(n_blocks, block_size, total):
+        if total > 0:
+            done_bytes = min(n_blocks * block_size, total)
+            if total >= 1024 * 1024:
+                _bar(done_bytes // (1024 * 1024), max(1, total // (1024 * 1024)), "MB")
+            else:
+                _bar(done_bytes // 1024, max(1, total // 1024), "KB")
+
+    # Fetch and verify the SHA256.txt manifest first.
+    sha256_path = cache_dir / _PZ_SHA256_FILE
+    if sha256_path.exists():
+        if hashlib.sha256(sha256_path.read_bytes()).hexdigest() != _PZ_SHA256_HASH:
+            sha256_path.unlink()
+    if not sha256_path.exists():
+        log(f"Downloading {_PZ_SHA256_FILE} ...")
+        urllib.request.urlretrieve(f"{_PZ_BASE}/{_PZ_SHA256_FILE}", sha256_path, _dl_progress)
+        _bar_done()
+        actual = hashlib.sha256(sha256_path.read_bytes()).hexdigest()
+        if actual != _PZ_SHA256_HASH:
+            err("SHA256.txt checksum mismatch — download may be tampered.")
+            sha256_path.unlink(missing_ok=True)
+            sys.exit(1)
+        ok(f"Downloaded {_PZ_SHA256_FILE}")
+    else:
+        ok(f"Using cached {_PZ_SHA256_FILE}")
+
+    sha256_text = sha256_path.read_text()
+
+    def _get_expected_hash(filename):
+        for line in sha256_text.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[-1].lstrip("*") == filename:
+                return parts[0]
+        return None
+
+    for filename, hardcoded_sha256, dest_name, should_extract in PEAZIP_ASSETS:
+        cached = cache_dir / filename
+        dest = PEAZIP_DIST_DIR / dest_name
+        expected = _get_expected_hash(filename) or hardcoded_sha256
+
+        # Skip if already in place.
+        if not should_extract and dest.exists():
+            if hashlib.sha256(dest.read_bytes()).hexdigest() == expected:
+                ok(f"Already present: {dest_name}")
+                continue
+        elif should_extract and dest.exists() and any(dest.iterdir()):
+            ok(f"Already extracted: {dest_name}/")
+            continue
+
+        # Download if not cached or checksum mismatch.
+        if not cached.exists() or hashlib.sha256(cached.read_bytes()).hexdigest() != expected:
+            log(f"Downloading {filename} ...")
+            urllib.request.urlretrieve(f"{_PZ_BASE}/{filename}", cached, _dl_progress)
+            _bar_done()
+            actual = hashlib.sha256(cached.read_bytes()).hexdigest()
+            if actual != expected:
+                err(f"Checksum MISMATCH: {filename}")
+                err(f"  Expected : {expected}")
+                err(f"  Actual   : {actual}")
+                cached.unlink(missing_ok=True)
+                sys.exit(1)
+            ok(f"Downloaded and verified: {filename}")
+        else:
+            ok(f"Using cached: {filename}")
+
+        # Extract or copy to final destination.
+        if should_extract:
+            dest.mkdir(parents=True, exist_ok=True)
+            if filename.endswith(".zip"):
+                with _spinner(f"Extract {filename}"):
+                    with zipfile.ZipFile(cached) as zf:
+                        for member in zf.infolist():
+                            name = member.filename
+                            if name.startswith("/") or ".." in name.split("/"):
+                                err(f"Unsafe path in archive: {name}")
+                                sys.exit(1)
+                            zf.extract(member, dest)
+            else:  # .tar.gz
+                with _spinner(f"Extract {filename}"):
+                    with tarfile.open(cached) as tf:
+                        tf.extractall(dest, filter="data")
+            ok(f"Extracted: {dest_name}/")
+        else:
+            _copy_with_progress(cached, dest, label=f"Copy {dest_name}")
+
+    ok(f"All PeaZip {PEAZIP_VERSION} portables ready in dist/PeaZip/")
+
+
 def cmd_disks(_args):
     print_disks()
 
@@ -1046,50 +1002,29 @@ def cmd_usb(args):
     _create_usb_layout(args.device)
 
 
-def cmd_container(args):
-    _create_container(args.size)
-
-
 def cmd_populate(args):
-    _populate_tools(args.mount)
+    _populate_usb_tools(Path(args.mount))
 
 
 def cmd_update_tools(args):
-    """Mount the TOOLS partition, refresh its content, then unmount."""
+    """Mount the USB, refresh PeaZip portables and README.html, then unmount."""
     if args.mount:
-        _populate_tools(Path(args.mount))
+        _populate_usb_tools(Path(args.mount))
         return
-    # Auto-mount partition 1
     device = args.device
-    confirm_device(device)
-    os_name = platform.system()
-    if os_name == "Darwin":
-        tools_part = f"{device}s1"
-        run_quiet(f"diskutil mount {shlex.quote(tools_part)}", f"Mount TOOLS ({tools_part})")
-        tools_mount = _macos_mount_point(tools_part)
-        if not tools_mount:
-            err("Could not determine TOOLS mount point.")
-            sys.exit(1)
-        _populate_tools(tools_mount)
-        run_quiet(f"diskutil eject {shlex.quote(device)}", f"Eject {device}")
-    elif os_name == "Linux":
-        tools_part = _linux_partition(device, 1)
-        tools_mount = Path(f"/tmp/vc_tools_{os.getpid()}")
-        tools_mount.mkdir(exist_ok=True)
-        try:
-            run_quiet(f"mount {shlex.quote(tools_part)} {shlex.quote(str(tools_mount))}",
-                      f"Mount TOOLS ({tools_part})")
-            _populate_tools(tools_mount)
-            run_quiet(f"umount {shlex.quote(str(tools_mount))}", "Unmount TOOLS")
-            run_quiet("sync", "Flush writes")
-            run_quiet(f"eject {shlex.quote(device)}", f"Eject {device}")
-        finally:
-            with contextlib.suppress(Exception):
-                tools_mount.rmdir()
-    else:
-        err(f"Unsupported OS: {os_name}")
+    blocked = get_system_disks()
+    if device in blocked:
+        err(f"{device} is identified as a system disk and cannot be selected.")
         sys.exit(1)
-    ok("TOOLS partition updated")
+    if not confirm(f"Update PeaZip portables on {device}?"):
+        warn("Aborted.")
+        sys.exit(0)
+    mount = _mount_usb(device)
+    try:
+        _populate_usb_tools(mount)
+    finally:
+        _eject_usb(device, mount)
+    ok("USB tools updated")
 
 
 def cmd_clone(args):
@@ -1102,111 +1037,13 @@ def cmd_verify(_args):
     _verify_dist()
 
 
-def cmd_dist(_args):
-    DIST_DIR.mkdir(parents=True, exist_ok=True)
-    run_quiet(
-        f"pyinstaller --onedir --name SecureUSB --distpath {shlex.quote(str(DIST_DIR))} tui.py",
-        "Build PyInstaller launcher",
-    )
-    for launcher in ("SecureUSB.command", "SecureUSB.sh", "SecureUSB.bat"):
-        shutil.copy(REPO_ROOT / "launchers" / launcher, DIST_DIR / launcher)
-    (DIST_DIR / "SecureUSB.command").chmod(0o755)
-    (DIST_DIR / "SecureUSB.sh").chmod(0o755)
-    ok("dist/ built")
-
-
-def cmd_fetch_veracrypt(_args):
-    VERSION = VERACRYPT_VERSION
-    base = f"https://launchpad.net/veracrypt/trunk/{VERSION}/+download"
-    checksum_url = f"{base}/veracrypt-{VERSION}-sha256sum.txt"
-
-    dest_dir = DIST_DIR / "VeraCrypt"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    checksum_path = dest_dir / "sha256sums.txt"
-
-    def _progress(n_blocks, block_size, total):
-        if total > 0:
-            pct = min(100, n_blocks * block_size * 100 // total)
-            print(f"\r    {pct:3d}%", end="", flush=True)
-
-    def _download_and_verify(url, path, display_name):
-        checksum_text = checksum_path.read_text()
-        expected = next(
-            (line.split()[0] for line in checksum_text.splitlines()
-             if display_name.lower() in line.lower()),
-            None,
-        )
-        if path.exists() and expected:
-            if hashlib.sha256(path.read_bytes()).hexdigest() == expected:
-                ok(f"Already present (checksum OK): {display_name}")
-                return
-        log(f"Downloading {display_name} ...")
-        urllib.request.urlretrieve(url, path, _progress)
-        print()
-        ok(f"Downloaded: {display_name}")
-        if not expected:
-            err(f"Could not find checksum entry for '{display_name}'")
-            path.unlink(missing_ok=True)
-            sys.exit(1)
-        actual = hashlib.sha256(path.read_bytes()).hexdigest()
-        if actual != expected:
-            err("Checksum MISMATCH — file may be corrupt or tampered with.")
-            err(f"  Expected : {expected}")
-            err(f"  Actual   : {actual}")
-            path.unlink(missing_ok=True)
-            sys.exit(1)
-        ok(f"Checksum verified: {display_name}")
-
-    log(f"VeraCrypt {VERSION} — fetching official SHA-256 checksums ...")
-    urllib.request.urlretrieve(checksum_url, checksum_path)
-    ok("Checksums downloaded")
-
-    # Windows installer
-    win_name = f"VeraCrypt Setup {VERSION}.exe"
-    _download_and_verify(
-        f"{base}/VeraCrypt%20Setup%20{VERSION}.exe",
-        dest_dir / win_name,
-        win_name,
-    )
-
-    # macOS — FUSE-T build (works on Intel and Apple Silicon)
-    mac_name = f"VeraCrypt_FUSE-T_{VERSION}.dmg"
-    _download_and_verify(
-        f"{base}/VeraCrypt_FUSE-T_{VERSION}.dmg",
-        dest_dir / mac_name,
-        mac_name,
-    )
-
-    # FUSE-T installer (required on macOS before running VeraCrypt)
-    fuse_t_name = f"fuse-t-macos-installer-{FUSE_T_VERSION}.pkg"
-    fuse_t_url = (
-        f"https://github.com/macos-fuse-t/fuse-t/releases/download/"
-        f"{FUSE_T_VERSION}/{fuse_t_name}"
-    )
-    fuse_t_path = dest_dir / fuse_t_name
-    if fuse_t_path.exists():
-        ok(f"Already present: {fuse_t_name}")
-    else:
-        log(f"Downloading {fuse_t_name} ...")
-        urllib.request.urlretrieve(fuse_t_url, fuse_t_path, _progress)
-        print()
-        ok(f"Downloaded: {fuse_t_name}  (macOS Gatekeeper will verify the signature on install)")
-
-
 def cmd_clean(_args):
     """Remove generated and temporary files."""
     targets = [
-        # PyInstaller output
         DIST_DIR,
-        REPO_ROOT / "build" / "SecureUSB",
-        REPO_ROOT / "SecureUSB.spec",
-        # VeraCrypt container and staging zip
-        CONTAINER_PATH,
-        STAGING_ZIP,
+        ARCHIVE_PATH,
     ]
-    # __pycache__ trees anywhere under the repo
     pycache_dirs = list(REPO_ROOT.rglob("__pycache__"))
-
     to_remove = [p for p in targets if p.exists()] + pycache_dirs
 
     if not to_remove:
@@ -1233,7 +1070,7 @@ def cmd_clean(_args):
 def _cli_main():
     parser = argparse.ArgumentParser(
         prog="tui.py",
-        description="Secure USB Toolkit — provision encrypted USB drives with VeraCrypt",
+        description="Secure USB Toolkit — provision encrypted USB drives with PeaZip",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -1242,40 +1079,36 @@ def _cli_main():
     p_usb = sub.add_parser("usb", help="Partition and format a USB drive")
     p_usb.add_argument("device", help="Target device (e.g. /dev/sdb, /dev/disk2)")
 
-    p_con = sub.add_parser("container", help="Create encrypted VeraCrypt container")
-    p_con.add_argument("--size", default="1G", help="Container size e.g. 2G, 500M  (default: 1G)")
+    p_pop = sub.add_parser("populate", help="Copy PeaZip portables and README to USB")
+    p_pop.add_argument("mount", help="Mount path of the USB partition")
 
-    p_pop = sub.add_parser("populate", help="Copy launchers and README to TOOLS partition")
-    p_pop.add_argument("mount", help="Mount path of the TOOLS partition (partition 1)")
-
-    p_upd = sub.add_parser("update-tools", help="Refresh the TOOLS partition on an already-provisioned drive")
+    p_upd = sub.add_parser("update-tools",
+                            help="Refresh PeaZip portables on an already-provisioned drive")
     _upd_target = p_upd.add_mutually_exclusive_group(required=True)
     _upd_target.add_argument("--device", metavar="DEV",
                               help="Device to update (e.g. /dev/disk2) — auto-mounts partition 1")
     _upd_target.add_argument("--mount", metavar="PATH",
-                              help="Already-mounted TOOLS partition path (skips mount/unmount)")
+                              help="Already-mounted USB path (skips mount/unmount)")
 
     p_clone = sub.add_parser("clone", help="Clone a provisioned USB drive (dd bit-copy)")
     p_clone.add_argument("source", help="Source device")
     p_clone.add_argument("target", help="Target device")
 
-    sub.add_parser("verify",          help="Verify integrity checksums in dist/")
-    sub.add_parser("dist",            help="Build the PyInstaller launcher bundle into dist/")
-    sub.add_parser("fetch-veracrypt", help="Download and verify VeraCrypt Windows installer")
-    sub.add_parser("clean",           help="Remove generated files (dist/, output.vc, staging.zip, __pycache__)")
+    sub.add_parser("verify",       help="Verify integrity checksums in dist/")
+    sub.add_parser("fetch-peazip", help="Download and verify PeaZip portables for all platforms")
+    sub.add_parser("clean",
+                   help="Remove generated files (dist/, secure_data.7z, __pycache__)")
 
     args = parser.parse_args()
     dispatch = {
-        "disks":           cmd_disks,
-        "usb":             cmd_usb,
-        "container":       cmd_container,
-        "populate":        cmd_populate,
-        "update-tools":    cmd_update_tools,
-        "clone":           cmd_clone,
-        "verify":          cmd_verify,
-        "dist":            cmd_dist,
-        "fetch-veracrypt": cmd_fetch_veracrypt,
-        "clean":           cmd_clean,
+        "disks":        cmd_disks,
+        "usb":          cmd_usb,
+        "populate":     cmd_populate,
+        "update-tools": cmd_update_tools,
+        "clone":        cmd_clone,
+        "verify":       cmd_verify,
+        "fetch-peazip": cmd_fetch_peazip,
+        "clean":        cmd_clean,
     }
     dispatch[args.command](args)
 
@@ -1286,18 +1119,18 @@ def _tui_main():
     banner()
     check_prerequisites()
     print()
-    log("Phase 1  Build artifacts on this machine (source files → encrypted container)")
+    log("Phase 1  Build artifacts on this machine (source files → encrypted archive)")
     log("Phase 2  Provision one or more USB drives from those artifacts")
 
-    if CONTAINER_PATH.exists():
+    if ARCHIVE_PATH.exists():
         print()
-        size_mb = CONTAINER_PATH.stat().st_size // (1024 * 1024)
-        print(bold(f"  ┌─ Existing encrypted container found ({'─' * 20}"))
-        print(bold(f"  │  {CONTAINER_PATH}  ({size_mb:,} MB)"))
+        size_mb = ARCHIVE_PATH.stat().st_size // (1024 * 1024)
+        print(bold(f"  ┌─ Existing encrypted archive found ({'─' * 20}"))
+        print(bold(f"  │  {ARCHIVE_PATH}  ({_fmt_size(size_mb)})"))
         print(bold(f"  └{'─' * 50}"))
         print()
-        print(dim("    1.  Use existing container  (skip Phase 1, go straight to provisioning)"))
-        print(dim("    2.  Create a new container  (run Phase 1 from scratch)"))
+        print(dim("    1.  Use existing archive  (skip Phase 1, go straight to provisioning)"))
+        print(dim("    2.  Create a new archive  (run Phase 1 from scratch)"))
         print()
         choice = _read(bold("  ▶  Choice [1]: ")).strip() or "1"
         if choice == "1":
@@ -1323,3 +1156,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

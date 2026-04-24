@@ -10,12 +10,10 @@ venv/
 dist/
 !dist/.gitkeep
 
-# VeraCrypt containers
+# Encrypted archives
 *.vc
 output.vc
-
-# Staging zip (compressed source payload, not tracked)
-staging.zip
+secure_data.7z
 
 # Temp / scratch
 /tmp/
@@ -24,8 +22,8 @@ staging.zip
 .DS_Store
 .AppleDouble
 
-# Downloaded VeraCrypt binaries (fetch with: make fetch-veracrypt)
-dist/VeraCrypt/
+# Downloaded PeaZip portables cache (fetch with: python3 tui.py fetch-peazip)
+dist/PeaZip/.cache/
 
 # Sensitive config overrides (never commit local passwords or env overrides)
 *.env.local
