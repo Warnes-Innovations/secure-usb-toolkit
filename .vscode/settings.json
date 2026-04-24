@@ -1,3 +1,9 @@
 {
-    "specstory.cloudSync.enabled": "never"
+    "specstory.cloudSync.enabled": "never",
+    "chat.tools.terminal.autoApprove": {
+        "/^python3 -c \"import ast; ast\\.parse\\(open\\('/Users/warnes/src/secure-usb-toolkit/tui\\.py'\\)\\.read\\(\\)\\); print\\('syntax OK'\\)\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
 }

@@ -16,18 +16,9 @@ jobs:
       - name: Install Python dependencies
         run: pip install pyinstaller
 
-      - name: Validate shell scripts (syntax check only — no execution)
-        run: |
-          for f in build/*.sh; do
-            echo "Checking $f ..."
-            bash -n "$f"
-          done
-
       - name: Validate Python modules import cleanly
         run: |
-          python3 -c "from build import safety; print('safety.py OK')"
-          python3 -c "import ast, sys; ast.parse(open('tui.py').read()); print('tui.py OK')"
-          python3 -c "import ast, sys; ast.parse(open('cli.py').read()); print('cli.py OK')"
+          python3 -c "import ast; ast.parse(open('tui.py').read()); print('tui.py OK')"
 
       - name: Build Linux launcher with PyInstaller
         run: |

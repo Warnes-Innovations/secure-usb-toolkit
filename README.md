@@ -21,6 +21,7 @@ Reproducible cross-platform encrypted USB provisioning using VeraCrypt.
 |---|---|
 | Python 3.8+ | TUI / CLI / safety module |
 | [VeraCrypt](https://www.veracrypt.fr/en/Downloads.html) | Container creation and mounting |
+| [FUSE-T](https://www.fuse-t.org/) | Required on macOS for VeraCrypt to mount containers (works on Intel and Apple Silicon) |
 | `parted` | USB partition layout (Linux) |
 | `mkfs.vfat`, `mkfs.exfat` | Partition formatting (Linux) |
 | `pyinstaller` | Build Windows/Linux launcher exe (optional) |
@@ -30,35 +31,32 @@ Reproducible cross-platform encrypted USB provisioning using VeraCrypt.
 ## Quick Start
 
 ```bash
-# Launch the interactive TUI
+# Launch the interactive TUI wizard
 python3 tui.py
 
 # Or use the CLI directly
-python3 cli.py disks           # list available disks
-python3 cli.py usb /dev/sdb    # create USB layout
-python3 cli.py container       # create encrypted container
-python3 cli.py populate /mnt/tools
-python3 cli.py clone /dev/sdb /dev/sdc
-python3 cli.py verify
-
-# Makefile shortcuts
-make fetch-veracrypt   # download Windows VeraCrypt installer into dist/VeraCrypt/
-make usb DEVICE=/dev/sdb
-make container
-make populate
-make verify
-make dist          # build PyInstaller launcher into dist/
+python3 tui.py disks                        # list available disks
+python3 tui.py usb /dev/sdb                 # partition and format USB
+python3 tui.py container --size 5G          # create encrypted container
+python3 tui.py populate /mnt/tools          # copy launchers + README to TOOLS partition
+python3 tui.py clone /dev/sdb /dev/sdc      # bit-for-bit clone
+python3 tui.py verify                       # checksum everything in dist/
+python3 tui.py dist                         # build PyInstaller launcher into dist/
+python3 tui.py fetch-veracrypt              # download Windows VeraCrypt installer
 ```
 
 ### Provisioning workflow (full USB from scratch)
 
 ```bash
-make fetch-veracrypt          # download + verify VeraCrypt Windows installer
-make usb DEVICE=/dev/sdb      # partition and format the USB
-make container                # create SECURE_DATA.vc (you choose the password)
-make dist                     # build platform launchers
-make populate                 # copy launchers, README.html, and VeraCrypt to USB
-make verify                   # checksum everything in dist/
+python3 tui.py               # interactive wizard walks through all steps
+
+# Or step-by-step via CLI:
+python3 tui.py fetch-veracrypt              # download + verify VeraCrypt Windows installer
+python3 tui.py usb /dev/sdb                 # partition and format the USB
+python3 tui.py container                    # create SECURE_DATA.vc (you choose the password)
+python3 tui.py dist                         # build platform launchers
+python3 tui.py populate /mnt/tools          # copy launchers, README.html, and VeraCrypt to USB
+python3 tui.py verify                       # checksum everything in dist/
 ```
 
 ---
@@ -72,7 +70,9 @@ Non-technical recipients receive a USB with:
 
 **Windows users** double-click `SecureUSB.bat` → `README.html` opens in their browser → they run the bundled `VeraCrypt/VeraCrypt Setup 1.26.24.exe` → mount `SECURE_DATA.vc`. No internet connection required.
 
-**macOS/Linux users** open `README.html` and follow the instructions to install VeraCrypt from the official site.
+**macOS users** open `README.html` and follow the instructions to install [FUSE-T](https://www.fuse-t.org/) and then the VeraCrypt FUSE-T build. Both are required — VeraCrypt uses FUSE-T to mount containers on macOS.
+
+**Linux users** open `README.html` and follow the instructions to install VeraCrypt from the official site.
 
 > **Note:** Windows USB _provisioning_ (creating layouts, containers, cloning) currently requires Linux or macOS. See the GitHub issue tracker for the Windows provisioning roadmap.
 
@@ -106,28 +106,17 @@ System disk detection is OS-aware:
 ## Architecture
 
 ```
-build/
-  create_usb_layout.sh          — Partition and format USB (Linux, requires parted)
-  create_container.sh           — Create VeraCrypt container (interactive password)
-  clone_usb.sh                  — Bit-for-bit USB clone via dd
-  verify.sh                     — SHA-256 integrity check (Linux + macOS)
-  populate_tools_partition.sh   — Copy launchers + README.html + VeraCrypt to USB
-  fetch_veracrypt.sh            — Download + verify Windows VeraCrypt installer
-  safety.py                     — Cross-platform disk safety module
-
-cli.py                          — Scriptable CLI (argparse subcommands)
-tui.py                          — Interactive menu-driven TUI
+tui.py                          — Interactive TUI wizard and scriptable CLI
 
 launchers/
   SecureUSB.command             — macOS double-click launcher (goes on TOOLS partition)
   SecureUSB.sh                  — Linux launcher
-  SecureUSB.bat                 — Windows launcher (requires pre-built SecureUSB.exe)
+  SecureUSB.bat                 — Windows launcher
 
 templates/
   README.html                   — End-user instructions (placed on TOOLS partition)
-  container_config.env          — Non-sensitive container defaults (size, output path)
 
-dist/                           — Built artifacts (generated by make dist, git-ignored)
+dist/                           — Built artifacts (generated by tui.py dist, git-ignored)
 ```
 
 ---
@@ -136,11 +125,10 @@ dist/                           — Built artifacts (generated by make dist, git
 
 GitHub Actions (`.github/workflows/build.yml`) on every push:
 
-1. Syntax-checks all shell scripts (`bash -n`)
-2. Validates Python modules parse without errors
-3. Builds the Linux launcher with PyInstaller
-4. Generates SHA-256 checksums
-5. Uploads the launcher as a build artifact
+1. Validates `tui.py` parses without errors
+2. Builds the Linux launcher with PyInstaller
+3. Generates SHA-256 checksums
+4. Uploads the launcher as a build artifact
 
 No destructive disk operations are performed in CI.
 

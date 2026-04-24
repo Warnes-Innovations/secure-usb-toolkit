@@ -99,7 +99,36 @@
   </div>
 
   <div class="platform">
-    <h3>🍎 macOS &nbsp;/&nbsp; 🐧 Linux</h3>
+    <h3>🍎 macOS — two installs required</h3>
+    <p>
+      VeraCrypt on macOS requires a FUSE driver to mount encrypted volumes.
+      You must install <strong>FUSE-T</strong> first, then <strong>VeraCrypt</strong>.
+      FUSE-T is kext-free and works on both Intel and Apple Silicon Macs.
+    </p>
+    <ol>
+      <li>
+        <strong>Install FUSE-T.</strong><br>
+        A copy of the FUSE-T installer is included on this USB drive in the
+        <strong>VeraCrypt</strong> folder (<code>fuse-t-macos-installer-*.pkg</code>).
+        Double-click it and follow the prompts. You may be asked for your password
+        and to approve a system extension in <em>System Settings → Privacy &amp; Security</em>.
+      </li>
+      <li>
+        <strong>Install VeraCrypt (FUSE-T build).</strong><br>
+        Open the <strong>VeraCrypt</strong> folder on this USB drive and run
+        <code>VeraCrypt_FUSE-T_*.dmg</code>. Drag the app to your Applications folder.
+      </li>
+    </ol>
+    <p style="margin-top:10px; font-size:0.9em; color:#555;">
+      Prefer to download directly? Get both from the official sites:<br>
+      FUSE-T: <a href="https://www.fuse-t.org/" target="_blank">https://www.fuse-t.org/</a><br>
+      VeraCrypt: <a href="https://veracrypt.io/en/Downloads.html" target="_blank">https://veracrypt.io/en/Downloads.html</a>
+      (choose the <em>FUSE-T compatible version</em>)
+    </p>
+  </div>
+
+  <div class="platform">
+    <h3>🐧 Linux</h3>
     <p>
       Download and install VeraCrypt from the official website:
     </p>
