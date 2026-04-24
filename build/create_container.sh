@@ -15,7 +15,9 @@ echo
 # Password is entered interactively by VeraCrypt — never stored or logged.
 veracrypt --text --create "$OUTPUT_CONTAINER" \
   --size "$SIZE" \
+  --volume-type Normal \
   --encryption AES \
+  --hash SHA-512 \
   --filesystem exfat \
   --pim 0 \
   --random-source /dev/urandom
