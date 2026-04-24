@@ -58,14 +58,15 @@
 
   <h1>🔐 Secure USB Drive</h1>
   <p>
-    This USB drive contains a <strong>password-protected encrypted area</strong> for securely
-    storing files. The encrypted storage is powered by
-    <a href="https://www.veracrypt.fr" target="_blank">VeraCrypt</a>, a free and open-source
-    encryption tool trusted by security professionals worldwide.
+    This USB drive contains a <strong>password-protected encrypted archive</strong> for securely
+    storing files. The archive (<code>secure_data.7z</code>) uses AES-256 encryption via
+    <a href="https://www.7-zip.org/" target="_blank">7-Zip</a>, a free and open-source tool
+    available on every major platform.
   </p>
   <p>
-    Your files are stored inside <code>SECURE_DATA.vc</code> on the second partition of this drive.
-    To access them, you need VeraCrypt installed on your computer.
+    A portable copy of <a href="https://peazip.github.io/" target="_blank">PeaZip</a>
+    (a free, open-source file manager that includes 7-Zip support) is bundled on this drive
+    for your platform — no separate download required.
   </p>
 
   <div class="warning">
@@ -73,140 +74,132 @@
     recovered — not even by the person who gave you this drive. Keep your password safe.
   </div>
 
-  <h2><span class="step-num">1</span> Install VeraCrypt</h2>
+  <h2><span class="step-num">1</span> Open the Encrypted Archive</h2>
   <p>
-    A copy of the VeraCrypt installer for Windows is included on this USB drive.
+    Use the bundled PeaZip portable or any 7-Zip-compatible tool already installed on your
+    computer. Choose the instructions for your platform below.
   </p>
-
-  <div class="platform">
-    <h3>🪟 Windows — bundled installer</h3>
-    <ol>
-      <li>
-        Open the <strong>VeraCrypt</strong> folder on this USB drive
-        (the same partition as this file).
-      </li>
-      <li>
-        Run <code>VeraCrypt Setup 1.26.24.exe</code> and follow the on-screen
-        instructions. Click through the defaults — no special configuration needed.
-      </li>
-    </ol>
-    <p style="margin-top:10px; font-size:0.9em; color:#555;">
-      Prefer to download directly? The latest version is always available at<br>
-      <a href="https://veracrypt.io/en/Downloads.html" target="_blank">
-        https://veracrypt.io/en/Downloads.html
-      </a>
-    </p>
-  </div>
-
-  <div class="platform">
-    <h3>🍎 macOS — two installs required</h3>
-    <p>
-      VeraCrypt on macOS requires a FUSE driver to mount encrypted volumes.
-      You must install <strong>FUSE-T</strong> first, then <strong>VeraCrypt</strong>.
-      FUSE-T is kext-free and works on both Intel and Apple Silicon Macs.
-    </p>
-    <ol>
-      <li>
-        <strong>Install FUSE-T.</strong><br>
-        A copy of the FUSE-T installer is included on this USB drive in the
-        <strong>VeraCrypt</strong> folder (<code>fuse-t-macos-installer-*.pkg</code>).
-        Double-click it and follow the prompts. You may be asked for your password
-        and to approve a system extension in <em>System Settings → Privacy &amp; Security</em>.
-      </li>
-      <li>
-        <strong>Install VeraCrypt (FUSE-T build).</strong><br>
-        Open the <strong>VeraCrypt</strong> folder on this USB drive and run
-        <code>VeraCrypt_FUSE-T_*.dmg</code>. Drag the app to your Applications folder.
-      </li>
-    </ol>
-    <p style="margin-top:10px; font-size:0.9em; color:#555;">
-      Prefer to download directly? Get both from the official sites:<br>
-      FUSE-T: <a href="https://www.fuse-t.org/" target="_blank">https://www.fuse-t.org/</a><br>
-      VeraCrypt: <a href="https://veracrypt.io/en/Downloads.html" target="_blank">https://veracrypt.io/en/Downloads.html</a>
-      (choose the <em>FUSE-T compatible version</em>)
-    </p>
-  </div>
-
-  <div class="platform">
-    <h3>🐧 Linux</h3>
-    <p>
-      Download and install VeraCrypt from the official website:
-    </p>
-    <p>
-      <a href="https://veracrypt.io/en/Downloads.html" target="_blank">
-        https://veracrypt.io/en/Downloads.html
-      </a>
-    </p>
-  </div>
-
-  <h2><span class="step-num">2</span> Open Your Encrypted Files</h2>
 
   <div class="platform">
     <h3>🪟 Windows</h3>
     <ol>
-      <li>Open the <strong>VeraCrypt</strong> application from your Start menu.</li>
-      <li>Click <strong>Select File…</strong> in the middle of the window.</li>
       <li>
-        Browse to the <strong>second partition</strong> of this USB drive and open
-        <code>SECURE_DATA.vc</code>.<br>
-        <em>(The second partition may appear as a separate drive letter in Windows Explorer.)</em>
+        Open the <strong>PeaZip-Windows</strong> folder on this USB drive and
+        run <code>PeaZip.exe</code> — no installation needed.
       </li>
       <li>
-        In the list at the top of VeraCrypt, click on an unused drive letter
-        (e.g. <strong>Z:</strong>).
+        Use <strong>File → Open archive…</strong> (or drag and drop) to open
+        <code>secure_data.7z</code> from the root of this USB drive.
       </li>
-      <li>Click <strong>Mount</strong>.</li>
-      <li>Enter your password and click <strong>OK</strong>.</li>
+      <li>Enter your password when prompted.</li>
       <li>
-        Your files now appear in Windows Explorer under the drive letter you selected.
-        Use them just like any other folder.
+        Select the files or folders you want and click <strong>Extract</strong>
+        to save them to your computer.
+      </li>
+    </ol>
+    <p style="margin-top:10px; font-size:0.9em; color:#555;">
+      Alternatively, use 7-Zip if already installed:
+      right-click <code>secure_data.7z</code> → <strong>7-Zip → Extract files…</strong>
+    </p>
+  </div>
+
+  <div class="platform">
+    <h3>🍎 macOS — Intel</h3>
+    <ol>
+      <li>
+        Locate <strong>PeaZip-macOS-Intel.zip</strong> on this USB drive and double-click
+        to unzip it. Move the resulting <strong>PeaZip.app</strong> to your Desktop or
+        Applications folder.
+      </li>
+      <li>
+        <strong>First launch only:</strong> right-click (or Control-click) the app and choose
+        <strong>Open</strong> to bypass Gatekeeper, then click <strong>Open</strong> again in
+        the dialog.
+      </li>
+      <li>
+        Open <code>secure_data.7z</code> from the root of the USB drive via
+        <strong>File → Open archive…</strong>, enter your password, and extract your files.
       </li>
     </ol>
   </div>
 
   <div class="platform">
-    <h3>🍎 macOS</h3>
+    <h3>🍎 macOS — Apple Silicon (M-series)</h3>
     <ol>
-      <li>Open the <strong>VeraCrypt</strong> application.</li>
-      <li>Click <strong>Select File…</strong> and navigate to the USB drive's second partition.</li>
-      <li>Select <code>SECURE_DATA.vc</code> and click <strong>Open</strong>.</li>
-      <li>Click <strong>Mount</strong>, enter your password, then click <strong>OK</strong>.</li>
       <li>
-        Your files appear in <strong>Finder → Locations</strong> as a new mounted volume.
+        Locate <strong>PeaZip-macOS-ARM.dmg</strong> on this USB drive and double-click
+        to mount it. Drag <strong>PeaZip.app</strong> to your Applications folder.
+      </li>
+      <li>
+        <strong>First launch only:</strong> right-click the app and choose <strong>Open</strong>,
+        then confirm in the Gatekeeper dialog.
+      </li>
+      <li>
+        Open <code>secure_data.7z</code> from the USB drive, enter your password, and
+        extract your files.
+      </li>
+    </ol>
+    <p style="margin-top:10px; font-size:0.9em; color:#555;">
+      Not sure which Mac you have? Click the Apple menu → <strong>About This Mac</strong>.
+      If it says <em>Apple M…</em>, you have Apple Silicon. If it says <em>Intel</em>, use
+      the Intel installer above.
+    </p>
+  </div>
+
+  <div class="platform">
+    <h3>🐧 Linux — x86-64</h3>
+    <ol>
+      <li>
+        Open the <strong>PeaZip-Linux-x86</strong> folder on this USB drive.
+      </li>
+      <li>
+        Run <code>peazip</code> from that folder (you may need to mark it executable first:
+        <code>chmod +x peazip</code>).
+      </li>
+      <li>
+        Open <code>secure_data.7z</code>, enter your password, and extract your files.
+      </li>
+    </ol>
+    <p style="margin-top:10px; font-size:0.9em; color:#555;">
+      Alternatively: <code>7z x secure_data.7z</code> if 7-Zip is already installed
+      (<code>sudo apt install 7zip</code> / <code>sudo dnf install 7zip</code>).
+    </p>
+  </div>
+
+  <div class="platform">
+    <h3>🐧 Linux — ARM64 (aarch64)</h3>
+    <ol>
+      <li>
+        Open the <strong>PeaZip-Linux-ARM</strong> folder on this USB drive.
+      </li>
+      <li>
+        Run <code>peazip</code> from that folder (<code>chmod +x peazip</code> if needed).
+      </li>
+      <li>
+        Open <code>secure_data.7z</code>, enter your password, and extract your files.
       </li>
     </ol>
   </div>
 
-  <div class="platform">
-    <h3>🐧 Linux</h3>
-    <ol>
-      <li>Open VeraCrypt (or run <code>veracrypt</code> in a terminal).</li>
-      <li>Click <strong>Select File…</strong> and choose <code>SECURE_DATA.vc</code>.</li>
-      <li>Select a free slot number, click <strong>Mount</strong>, and enter your password.</li>
-      <li>Your files are accessible at the path shown in the VeraCrypt window.</li>
-    </ol>
-  </div>
-
-  <h2><span class="step-num">3</span> Close Safely When Done</h2>
+  <h2><span class="step-num">2</span> Safely Remove the Drive When Done</h2>
   <p>
-    It is important to properly dismount the encrypted drive before unplugging the USB.
-    Unplugging without dismounting can corrupt your files.
+    Because the archive is a regular file (not a mounted volume), there is nothing to
+    dismount — simply close PeaZip and eject the USB drive normally.
   </p>
   <ol>
-    <li>Close any files or applications that are using files from the encrypted drive.</li>
-    <li>In VeraCrypt, select the mounted volume and click <strong>Dismount</strong>.</li>
+    <li>Close PeaZip or any other application that has files from the USB open.</li>
     <li>
-      Eject or safely remove the USB drive from your operating system
-      before unplugging it.
+      Eject the drive from your operating system before unplugging it
+      (right-click the drive in Explorer / Finder / file manager → <strong>Eject</strong>).
     </li>
   </ol>
 
   <h2>Need Help?</h2>
   <p>
-    Full VeraCrypt documentation is available at:<br>
-    <a href="https://www.veracrypt.fr/en/Documentation.html" target="_blank">
-      https://www.veracrypt.fr/en/Documentation.html
-    </a>
+    PeaZip documentation and downloads:
+    <a href="https://peazip.github.io/" target="_blank">https://peazip.github.io/</a><br>
+    7-Zip documentation:
+    <a href="https://www.7-zip.org/faq.html" target="_blank">https://www.7-zip.org/faq.html</a>
   </p>
 
 </body>
