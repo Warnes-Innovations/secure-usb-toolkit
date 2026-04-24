@@ -3,10 +3,19 @@ import subprocess
 import shlex
 import sys
 import os
+import glob
 import zipfile
 import shutil
 import platform
+import contextlib
 from pathlib import Path
+
+try:
+    import readline as _rl
+    _READLINE = True
+except ImportError:
+    _rl = None  # type: ignore
+    _READLINE = False
 
 REPO_ROOT = Path(__file__).parent
 DIST_DIR = REPO_ROOT / "dist"
@@ -63,6 +72,58 @@ def confirm(msg, default_yes=True):
 
 def wait(msg="Press Enter to continue"):
     _read(bold(f"\n  ▶  {msg}... "))
+
+
+# ── Readline path completion ──────────────────────────────────────────────────
+
+@contextlib.contextmanager
+def _path_completion():
+    """Context manager that enables tab-completion for filesystem paths."""
+    if not _READLINE:
+        yield
+        return
+
+    def _completer(text, state):
+        expanded = os.path.expanduser(text)
+        matches = glob.glob(expanded + "*")
+        annotated = [m + ("/" if os.path.isdir(m) else "") for m in matches]
+        if text.startswith("~"):
+            home = os.path.expanduser("~")
+            annotated = [
+                "~" + m[len(home):] if m.startswith(home) else m
+                for m in annotated
+            ]
+        try:
+            return annotated[state]
+        except IndexError:
+            return None
+
+    old_completer = _rl.get_completer()
+    old_delims = _rl.get_completer_delims()
+    _rl.set_completer(_completer)
+    _rl.set_completer_delims(" \t\n")
+    bind_cmd = (
+        "bind ^I rl_complete" if "libedit" in (_rl.__doc__ or "")
+        else "tab: complete"
+    )
+    _rl.parse_and_bind(bind_cmd)
+    try:
+        yield
+    finally:
+        _rl.set_completer(old_completer)
+        _rl.set_completer_delims(old_delims)
+
+
+def prompt_path(msg, default=None):
+    """Like prompt() but with tab-completion for filesystem paths."""
+    with _path_completion():
+        return prompt(msg, default)
+
+
+def prompt_path_required(msg):
+    """Like prompt_required() but with tab-completion for filesystem paths."""
+    with _path_completion():
+        return prompt_required(msg)
 
 
 # ── Collapsible output box ────────────────────────────────────────────────────
@@ -210,7 +271,7 @@ def phase_build():
     if src_type == "2":
         # Existing zip
         while True:
-            p = expand(prompt_required("Path to zip file"))
+            p = expand(prompt_path_required("Path to zip file"))
             if os.path.isfile(p) and p.lower().endswith(".zip"):
                 break
             err(f"Not found or not a .zip file: {p}")
@@ -221,7 +282,7 @@ def phase_build():
     else:
         # Folder
         while True:
-            p = expand(prompt_required("Source folder path"))
+            p = expand(prompt_path_required("Source folder path"))
             if os.path.isdir(p):
                 break
             err(f"Not a directory: {p}")
@@ -317,7 +378,7 @@ def phase_provision():
         # Step 1 — Device selection
         step_header(1, 4, "Select target USB device")
         safety.print_disks()
-        device = prompt_required("Target USB device (e.g. /dev/sdb, /dev/disk2)")
+        device = prompt_path_required("Target USB device (e.g. /dev/sdb, /dev/disk2)")
         safety.confirm_device(device)
 
         # Step 2 — Format USB  (script has its own interactive YES prompt)
@@ -333,7 +394,7 @@ def phase_provision():
 
         # Step 3 — TOOLS partition
         step_header(3, 4, "Populate TOOLS partition")
-        tools_mount = prompt_required("TOOLS partition mount path (partition 1)")
+        tools_mount = prompt_path_required("TOOLS partition mount path (partition 1)")
         run_quiet(
             f"cd build && ./populate_tools_partition.sh {shlex.quote(tools_mount)}",
             "Copy launchers and README to TOOLS partition",
@@ -341,7 +402,7 @@ def phase_provision():
 
         # Step 4 — DATA partition
         step_header(4, 4, "Copy container to DATA partition")
-        data_mount = prompt_required("DATA partition mount path (partition 2)")
+        data_mount = prompt_path_required("DATA partition mount path (partition 2)")
         dest = os.path.join(data_mount, "SECURE_DATA.vc")
         run_quiet(
             f"cp {shlex.quote(str(CONTAINER_PATH))} {shlex.quote(dest)}",
