@@ -29,3 +29,4 @@ dist/VeraCrypt/
 
 # Sensitive config overrides (never commit local passwords or env overrides)
 *.env.local
+build/

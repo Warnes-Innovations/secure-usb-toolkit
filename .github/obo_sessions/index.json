@@ -1,0 +1,20 @@
+{
+  "format_version": 1,
+  "last_updated": "2026-04-23T12:19:47.098976",
+  "sessions": [
+    {
+      "file": "session_20260423_121552.json",
+      "title": "Code Review: launchers/SecureUSB.bat VeraCrypt installer flow",
+      "status": "completed",
+      "pending": 0,
+      "in_progress": 0,
+      "deferred": 0,
+      "blocked": 0,
+      "actionable": 0,
+      "open": 0,
+      "created": "2026-04-23",
+      "parent_session_file": null,
+      "active_child_session": null
+    }
+  ]
+}
