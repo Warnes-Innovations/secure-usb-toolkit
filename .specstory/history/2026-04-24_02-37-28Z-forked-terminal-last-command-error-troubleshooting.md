@@ -2643,3 +2643,36 @@ Looking at the VeraCrypt CLI options, `--filesystem none` creates the container 
 The real solution might be to detect whether macFUSE is available and conditionally use `--filesystem exfat` if it is, otherwise fall back to `--filesystem none`. Or we could create the container with no filesystem first, then mount and format it separately as a second step. The real issue is that macOS without macFUSE can't handle filesystem formatting during container creation—I need to work around that by creating with `--filesystem none` first, then formatting after mounting. On Linux this wouldn't be a problem, so I should probably ask if they want a platform-aware solution or explore a different approach entirely. So without macFUSE on macOS, command-line mounting just isn't possible—users would need the GUI app instead. The real solution depends on the platform: Linux can format during or after creation, macOS with macFUSE can format after mounting, but macOS without macFUSE would require falling back to manual steps or using the GUI.
 
 I should be upfront with the user about why `--filesystem none` was chosen in the first place—it's specifically to sidestep the macFUSE dependency during container creation. If they want full automation including formatting, they'd need macFUSE installed, and I could add detection logic to handle both scenarios appropriately.
+
+---
+
+_**User (2026-04-24 02:47:10Z)**_
+
+The `Users should open README.html to get started` message seems out of place:
+```
+
+  ✓  USB layout created on /dev/disk2
+      Partition 1 (FAT32 / TOOLS) : /dev/disk2s1  (macOS) / /dev/disk21  (Linux)
+      Partition 2 (exFAT / DATA)  : /dev/disk2s2  (macOS) / /dev/disk22  (Linux)
+
+  Step 3/4  —  Populate TOOLS partition
+  ······································
+  ✓  TOOLS → /Volumes/TOOLS
+  ✓  DATA  → /Volumes/DATA
+    Space OK on TOOLS partition: 950 MB free  (54 MB needed)
+  ✓  Tools partition populated at /Volumes/TOOLS
+    Users should open README.html to get started.
+
+  Step 4/4  —  Copy container to DATA partition
+  ······································
+    Space OK on DATA partition: 13938 MB free  (8193 MB needed)
+    Copy output.vc → SECURE_DATA.vc ...
+```
+
+---
+
+_**Agent (copilot/claude-sonnet-4.6)**_
+
+Let me find where that message is printed.
+
+<!-- specstory-relocated: processed=2026-05-19T02:01:40Z source=secure-usb-toolkit target=secure-usb-toolkit reason="first write path /Users/warnes/src/secure-usb-toolkit" -->
